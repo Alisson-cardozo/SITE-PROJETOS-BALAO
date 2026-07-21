@@ -1,0 +1,118 @@
+import { useState } from 'react';
+import { Loader2 } from 'lucide-react';
+import { api, ApiError } from '../lib/api';
+import { useAuth } from '../lib/auth';
+
+export function UserSettingsPage() {
+  const { user, token } = useAuth();
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (!token) return;
+    setFieldErrors({});
+    setFormError(null);
+    setSuccess(false);
+
+    if (currentPassword.trim() === '') {
+      setFieldErrors({ current_password: 'Informe sua senha atual.' });
+      return;
+    }
+    if (newPassword.length < 8) {
+      setFieldErrors({ new_password: 'A nova senha precisa ter pelo menos 8 caracteres.' });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setFieldErrors({ confirm_password: 'As senhas nao sao iguais.' });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await api.changePassword({ current_password: currentPassword, new_password: newPassword }, token);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setSuccess(true);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.errors) setFieldErrors(err.errors);
+        setFormError(err.message);
+      } else {
+        setFormError('Nao foi possivel trocar a senha.');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="bandeira-workspace">
+      <div className="bandeira-main-panel">
+        <div className="bandeira-panel-header">
+          <h2>Configuracoes do Usuario</h2>
+          <p>Dados da conta e troca de senha.</p>
+        </div>
+
+        <div className="bandeira-create-panel">
+          <h4>Sua conta</h4>
+          <p className="bandeira-size-hint">
+            Nome: <strong>{user?.name}</strong> — Email: <strong>{user?.email}</strong>
+          </p>
+        </div>
+
+        <div className="bandeira-create-panel">
+          <h4>Trocar senha</h4>
+
+          <label className="auth-field">
+            <span>Senha atual</span>
+            <input
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              autoComplete="current-password"
+            />
+            {fieldErrors.current_password && <small className="auth-error">{fieldErrors.current_password}</small>}
+          </label>
+
+          <label className="auth-field">
+            <span>Nova senha</span>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              autoComplete="new-password"
+              minLength={8}
+            />
+            {fieldErrors.new_password && <small className="auth-error">{fieldErrors.new_password}</small>}
+          </label>
+
+          <label className="auth-field">
+            <span>Repita a nova senha</span>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              autoComplete="new-password"
+              minLength={8}
+            />
+            {fieldErrors.confirm_password && <small className="auth-error">{fieldErrors.confirm_password}</small>}
+          </label>
+
+          {formError ? <p className="mold-import-error">{formError}</p> : null}
+          {success ? <p className="mold-form-success">Senha atualizada com sucesso.</p> : null}
+
+          <button type="button" className="mold-save-button" onClick={() => void handleSave()} disabled={saving}>
+            {saving ? <Loader2 size={16} className="mold-import-spinner" /> : null}
+            Salvar nova senha
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

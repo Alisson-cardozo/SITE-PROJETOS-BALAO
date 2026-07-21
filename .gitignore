@@ -1,0 +1,18 @@
+# Dependencies
+frontend/node_modules/
+
+# Build output
+frontend/dist/
+*.tsbuildinfo
+
+# Environment / secrets
+backend/.env
+
+# Runtime data (user uploads, logs) -- not source code
+backend/public/uploads/
+backend/storage/logs/*
+!backend/storage/logs/.gitkeep
+
+# OS / editor
+.DS_Store
+Thumbs.db
