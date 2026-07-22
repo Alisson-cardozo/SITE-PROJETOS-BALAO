@@ -1875,6 +1875,189 @@ svg {
   margin: 0 auto;
 }
 
+/* Layout duas colunas: config | preview */
+.riscado-layout {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 14px;
+  align-items: start;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+@media (max-width: 900px) {
+  .riscado-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.riscado-config-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.riscado-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.riscado-field-group h4 {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #7fa0c4;
+  margin: 0;
+}
+
+/* Cards de modelo */
+.riscado-modelo-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.riscado-modelo-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1.5px solid #1f2b40;
+  background: #0f1726;
+  cursor: pointer;
+  color: #b7c6db;
+  font-size: 14px;
+  font-weight: 600;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.riscado-modelo-card input {
+  display: none;
+}
+
+.riscado-modelo-card.active {
+  border-color: #77e6f2;
+  background: rgba(119, 230, 242, 0.10);
+  color: #77e6f2;
+}
+
+.riscado-modelo-card:hover:not(.active) {
+  border-color: #2a3f5a;
+  background: #141f35;
+}
+
+/* Cards de modo */
+.riscado-modo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+@media (max-width: 500px) {
+  .riscado-modo-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.riscado-modo-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 8px;
+  border-radius: 12px;
+  border: 1.5px solid #1f2b40;
+  background: #0f1726;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.riscado-modo-card input {
+  display: none;
+}
+
+.riscado-modo-icon {
+  font-size: 18px;
+  letter-spacing: 1px;
+  color: #4a6080;
+}
+
+.riscado-modo-card strong {
+  font-size: 13px;
+  color: #c4d4e8;
+}
+
+.riscado-modo-card span {
+  font-size: 11px;
+  color: #7fa0c4;
+  line-height: 1.4;
+}
+
+.riscado-modo-card.active {
+  border-color: #77e6f2;
+  background: rgba(119, 230, 242, 0.10);
+}
+
+.riscado-modo-card.active .riscado-modo-icon {
+  color: #77e6f2;
+}
+
+.riscado-modo-card.active strong {
+  color: #77e6f2;
+}
+
+.riscado-modo-card:hover:not(.active) {
+  border-color: #2a3f5a;
+  background: #141f35;
+}
+
+/* Caixa de resumo */
+.riscado-resumo {
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid #1a3a55;
+  background: rgba(119, 230, 242, 0.05);
+  font-size: 13.5px;
+  color: #b7c6db;
+  line-height: 1.6;
+}
+
+.riscado-resumo strong {
+  color: #77e6f2;
+}
+
+/* Área de preview */
+.riscado-preview-area {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.riscado-preview-white {
+  background: white;
+  border-radius: 10px;
+}
+
+.riscado-preview-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 300px;
+  border-radius: 14px;
+  border: 1px dashed #263349;
+  background: rgba(15, 23, 38, 0.4);
+  color: #4a6080;
+  font-size: 14px;
+  text-align: center;
+  padding: 24px;
+}
+
 .plotter-workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);

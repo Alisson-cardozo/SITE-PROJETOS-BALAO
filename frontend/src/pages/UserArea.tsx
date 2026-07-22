@@ -34,11 +34,7 @@ interface PlotterTarget {
   isBlank?: boolean;
 }
 
-interface PlotterRiscadoTarget {
-  moldId: number;
-  nome: string;
-  modelo: string;
-}
+
 
 interface UserAreaProps {
   /** Grupos de navegacao extras (ex: "Usuarios" no menu do admin), somados aos padroes. */
@@ -100,7 +96,6 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
   const [activeId, setActiveId] = useState(selectableItems[0].id);
   const [editingMoldId, setEditingMoldId] = useState<number | null>(null);
   const [plotterTarget, setPlotterTarget] = useState<PlotterTarget | null>(null);
-  const [plotterRiscadoTarget, setPlotterRiscadoTarget] = useState<PlotterRiscadoTarget | null>(null);
   const [plotTacoModalMold, setPlotTacoModalMold] = useState<MoldSummary | null>(null);
 
   if (!user) {
@@ -114,9 +109,6 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
     setEditingMoldId(null);
     if (id !== 'plotter-tacos') {
       setPlotterTarget(null);
-    }
-    if (id !== 'plotter-riscado') {
-      setPlotterRiscadoTarget(null);
     }
     setActiveId(id);
   }
@@ -138,10 +130,6 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
     setPlotTacoModalMold(mold);
   }
 
-  function handlePlotRiscado(mold: MoldSummary) {
-    setPlotterRiscadoTarget({ moldId: mold.id, nome: mold.nome, modelo: mold.modelo });
-    setActiveId('plotter-riscado');
-  }
 
   /** "Modificar" em Meus Projetos: edita ESSE projeto especifico. */
   function handleModifyProject(project: MoldProjectSummary) {
@@ -193,9 +181,7 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
           onEdit={handleEditMold}
           onCopied={handleCopiedMold}
           onPlotTaco={handlePlotTaco}
-          onPlotRiscado={handlePlotRiscado}
           showPlotTaco={canUse('plotter-tacos')}
-          showPlotRiscado={canUse('plotter-riscado')}
         />
       ) : activeId === 'projetos-moldes-taqueados' ? (
         <ProjectGallery onModify={handleModifyProject} showModify={canUse('plotter-tacos')} />
@@ -217,18 +203,7 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
           note="Assim que voce plotar por aqui, os projetos salvos vao aparecer nesta aba."
         />
       ) : activeId === 'plotter-riscado' ? (
-        <PlotterRiscadoPage
-          moldId={plotterRiscadoTarget?.moldId ?? null}
-          moldHint={
-            plotterRiscadoTarget
-              ? { id: plotterRiscadoTarget.moldId, nome: plotterRiscadoTarget.nome, modelo: plotterRiscadoTarget.modelo }
-              : null
-          }
-          onBackToGallery={() => {
-            setPlotterRiscadoTarget(null);
-            setActiveId('moldes-galeria');
-          }}
-        />
+        <PlotterRiscadoPage />
       ) : activeId === 'moldes-tabela' ? (
         <MoldTableForm
           editMoldId={editingMoldId}

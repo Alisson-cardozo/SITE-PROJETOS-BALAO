@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Copy, Loader2, Pencil, PenTool, Printer, Ruler, Shapes, Trash2, UserRound } from 'lucide-react';
+import { Copy, Loader2, Pencil, Printer, Ruler, Shapes, Trash2, UserRound } from 'lucide-react';
 import { MoldSilhouettePreview } from '../components/MoldSilhouettePreview';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -12,14 +12,9 @@ interface MoldGalleryProps {
    * um projeto novo em Meus Projetos quando o usuario salvar, nunca reaproveita
    * um projeto ja existente desse molde. */
   onPlotTaco: (mold: MoldSummary) => void;
-  /** "Plotar Risco" abre o molde no Plotter Riscado (risco dos gomos do balao,
-   * com ou sem repeticao de desenho). */
-  onPlotRiscado: (mold: MoldSummary) => void;
-  /** Some com o atalho quando o admin esconde a aba correspondente — sem isso
-   * o botao continuaria funcionando mesmo com "Plotter (Moldes Tacos)"/"Plotter
-   * (Molde Riscado)" escondidos do menu. Default true (nunca escondido). */
+  /** Some com o atalho quando o admin esconde a aba "Plotter (Moldes Tacos)"
+   * do menu. Default true (nunca escondido). */
   showPlotTaco?: boolean;
-  showPlotRiscado?: boolean;
 }
 
 function formatCm(value: number): string {
@@ -55,9 +50,7 @@ export function MoldGallery({
   onEdit,
   onCopied,
   onPlotTaco,
-  onPlotRiscado,
   showPlotTaco = true,
-  showPlotRiscado = true,
 }: MoldGalleryProps) {
   const { token } = useAuth();
   const [molds, setMolds] = useState<MoldSummary[]>([]);
@@ -177,18 +170,6 @@ export function MoldGallery({
                     >
                       <Printer size={15} />
                       Plotar no Taco
-                    </button>
-                  ) : null}
-
-                  {showPlotRiscado ? (
-                    <button
-                      type="button"
-                      className="mold-card-btn plot"
-                      onClick={() => onPlotRiscado(mold)}
-                      title="Plotar o risco dos gomos deste molde"
-                    >
-                      <PenTool size={15} />
-                      Plotar Risco
                     </button>
                   ) : null}
 

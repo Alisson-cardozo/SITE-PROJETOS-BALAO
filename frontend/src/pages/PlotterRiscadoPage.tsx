@@ -1,500 +1,371 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Download, Loader2, Ruler } from 'lucide-react';
-import { api, ApiError } from '../lib/api';
-import { useAuth } from '../lib/auth';
-import { buildBalaoConeModel, buildConeFan, pointsToClosedPathD, pointsToPolylineAttr } from '../lib/coneGeometry';
-import {
-  SECTION_COLORS,
-  SectionTacoConfigMap,
-  SectionRatios,
-  createDefaultTacoConfigs,
-  DEFAULT_SECTION_RATIOS,
-  buildMoldProfile,
-} from '../lib/moldGeometry';
+﻿import { useMemo, useState } from "react";
+import { Download, Loader2, PenTool } from "lucide-react";
+import { buildBalaoConeModel, buildConeFan, pointsToClosedPathD, pointsToPolylineAttr } from "../lib/coneGeometry";
+import { buildModeladoProfilePoints } from "../lib/moldGeometry";
+import { downloadBlob, slugifyFilename } from "../lib/pdfExport";
+import { buildRiscadoPdf } from "../lib/plotterRiscadoPdf";
 
-const DEFAULT_COLORS = { ...SECTION_COLORS };
-import { downloadBlob, slugifyFilename } from '../lib/pdfExport';
-import { buildRiscadoPdf } from '../lib/plotterRiscadoPdf';
-import type { MoldDetail } from '../types';
+type Modelo = "modelado";
+type ModoLayout = "corrido" | "repeticao" | "espelho";
 
-interface PlotterRiscadoPageProps {
-  moldId: number | null;
-  moldHint?: { id: number; nome: string; modelo: string } | null;
-  onBackToGallery?: () => void;
-}
+const MODELOS: Array<{ id: Modelo; label: string }> = [
+  { id: "modelado", label: "Modelado" },
+];
 
-type Modo = 'repeticao' | 'individual';
+const EMPTY_TACO_CONFIGS = {
+  boca: { partitions: [] },
+  bojo: { partitions: [] },
+  bico: { partitions: [] },
+};
+const EMPTY_SECTION_RATIOS = { boca: 0.25, bojo: 0.45, bico: 0.30 };
+const EMPTY_SECTION_COLORS = { boca: "#fff", bojo: "#fff", bico: "#fff" };
 
-/** Nunca renderiza mais que isso de gomos fisicos de uma vez — evita travar o navegador. */
-const MAX_PAINEIS_RENDER = 60;
+const MAX_PREVIEW_GOMOS = 64;
 
-function divisoresDe(total: number): number[] {
-  if (total <= 0) {
-    return [];
+function divisoresDe(n: number): number[] {
+  if (n <= 0) return [];
+  const d: number[] = [];
+  for (let i = 1; i <= n; i++) {
+    if (n % i === 0) d.push(i);
   }
-  const divs: number[] = [];
-  for (let i = 1; i <= total; i += 1) {
-    if (total % i === 0) {
-      divs.push(i);
-    }
-  }
-  return divs;
+  return d;
 }
 
-interface CalcResult {
-  repeticoes: number;
-  /** Quantos gomos precisam ser desenhados de fato (a mao) — igual ao leque de cada repeticao. */
-  desenhosUnicos: number;
-  error: string | null;
-}
-
-export function PlotterRiscadoPage({ moldId, moldHint, onBackToGallery }: PlotterRiscadoPageProps) {
-  const { token } = useAuth();
-  const [mold, setMold] = useState<MoldDetail | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const [modo, setModo] = useState<Modo>('repeticao');
-  const [repeticoesStr, setRepeticoesStr] = useState('1');
-  const [gomosStr, setGomosStr] = useState('');
-  const [lastEdited, setLastEdited] = useState<'repeticoes' | 'gomos'>('repeticoes');
+export function PlotterRiscadoPage() {
+  const [modelo, setModelo] = useState<Modelo>("modelado");
+  const [tamanhoStr, setTamanhoStr] = useState("10");
+  const [gomosStr, setGomosStr] = useState("32");
+  const [modo, setModo] = useState<ModoLayout>("repeticao");
+  const [repeticoesStr, setRepeticoesStr] = useState("4");
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
-  const [tacoConfigs, setTacoConfigs] = useState<SectionTacoConfigMap>({
-    boca: { partitions: [] },
-    bojo: { partitions: [] },
-    bico: { partitions: [] },
-  });
-  const [sectionRatios, setSectionRatios] = useState<SectionRatios>({ ...DEFAULT_SECTION_RATIOS });
-  const [sectionColors, setSectionColors] = useState<Record<string, string>>(DEFAULT_COLORS);
+  const tamanhoM = parseFloat(tamanhoStr) || 0;
+  const quantidadeGomos = parseInt(gomosStr, 10) || 0;
+  const repeticoes = parseInt(repeticoesStr, 10) || 1;
 
-  useEffect(() => {
-    if (!token || moldId == null) {
-      setMold(null);
-      setError(null);
-      setLoading(false);
-      return;
+  const divisores = useMemo(() => divisoresDe(quantidadeGomos), [quantidadeGomos]);
+
+  const gomosNoLeque = useMemo(() => {
+    if (quantidadeGomos <= 0) return 0;
+    if (modo === "corrido") return quantidadeGomos;
+    if (modo === "espelho") {
+      return quantidadeGomos % 4 === 0 ? quantidadeGomos / 4 : 0;
     }
+    if (repeticoes <= 0 || quantidadeGomos % repeticoes !== 0) return 0;
+    return quantidadeGomos / repeticoes;
+  }, [modo, quantidadeGomos, repeticoes]);
 
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
+  const repeticoesReais = useMemo(() => {
+    if (modo === "corrido") return 1;
+    if (modo === "espelho") return 4;
+    return repeticoes;
+  }, [modo, repeticoes]);
 
-    api
-      .getMold(moldId, token)
-      .then((moldResponse) => {
-        return api.listProjects(token).then((projectsResponse: any) => {
-          if (cancelled) return;
-          setMold(moldResponse.data);
-
-          const moldProjects = projectsResponse.data.filter((p: any) => p.mold_id === moldId);
-          let loadedConfig = null;
-          if (moldProjects.length > 0) {
-            moldProjects.sort(
-              (a: any, b: any) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-            );
-            loadedConfig = moldProjects[0].plotter_config;
-          }
-
-          setTacoConfigs(loadedConfig?.taco_configs ?? createDefaultTacoConfigs(moldResponse.data.bainha_cm || 1));
-          setSectionRatios(loadedConfig?.section_ratios ?? { ...DEFAULT_SECTION_RATIOS });
-          setSectionColors(loadedConfig?.section_colors ?? DEFAULT_COLORS);
-
-          setModo('repeticao');
-          setRepeticoesStr('1');
-          setGomosStr(String(moldResponse.data.quantidade_gomos));
-          setLastEdited('repeticoes');
-        });
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setMold(null);
-          setError(err instanceof ApiError ? err.message : 'Nao foi possivel carregar o molde.');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [moldId, token]);
-
-  const quantidadeGomos = mold?.quantidade_gomos ?? 0;
-
-  const divisoresValidos = useMemo(() => divisoresDe(quantidadeGomos), [quantidadeGomos]);
-
-  const calc = useMemo((): CalcResult => {
-    if (modo === 'individual') {
-      return { repeticoes: 1, desenhosUnicos: quantidadeGomos, error: null };
+  const erroFormulario = useMemo(() => {
+    if (tamanhoM <= 0) return "Informe um tamanho valido em metros.";
+    if (quantidadeGomos <= 0) return "Informe uma quantidade de gomos valida.";
+    if (gomosNoLeque <= 0) {
+      if (modo === "espelho") return `${quantidadeGomos} gomos nao divide certinho por 4 repeticoes.`;
+      return `${quantidadeGomos} gomos nao divide certinho por ${repeticoes} repeticoes.`;
     }
-    if (quantidadeGomos <= 0) {
-      return { repeticoes: 0, desenhosUnicos: 0, error: null };
-    }
+    return null;
+  }, [tamanhoM, quantidadeGomos, gomosNoLeque, modo, repeticoes]);
 
-    if (lastEdited === 'repeticoes') {
-      const r = parseInt(repeticoesStr, 10);
-      if (!Number.isFinite(r) || r < 1) {
-        return { repeticoes: 0, desenhosUnicos: 0, error: 'Informe uma quantidade de repeticoes valida.' };
-      }
-      if (quantidadeGomos % r !== 0) {
-        return {
-          repeticoes: r,
-          desenhosUnicos: 0,
-          error: `O molde tem ${quantidadeGomos} gomos, que nao divide certinho por ${r} repeticoes.`,
-        };
-      }
-      return { repeticoes: r, desenhosUnicos: quantidadeGomos / r, error: null };
-    }
+  const pontos = useMemo(() => {
+    if (tamanhoM <= 0 || quantidadeGomos <= 0) return null;
+    return buildModeladoProfilePoints(tamanhoM, quantidadeGomos);
+  }, [tamanhoM, quantidadeGomos]);
 
-    const g = parseInt(gomosStr, 10);
-    if (!Number.isFinite(g) || g < 1) {
-      return { repeticoes: 0, desenhosUnicos: 0, error: 'Informe uma quantidade de gomos valida.' };
-    }
-    if (quantidadeGomos % g !== 0) {
-      return {
-        repeticoes: 0,
-        desenhosUnicos: g,
-        error: `${g} gomos nao fecha certinho com os ${quantidadeGomos} gomos do molde.`,
-      };
-    }
-    return { repeticoes: quantidadeGomos / g, desenhosUnicos: g, error: null };
-  }, [modo, lastEdited, repeticoesStr, gomosStr, quantidadeGomos]);
-
-  // Mantem os dois campos sincronizados: quando um da conta certo, reflete o
-  // valor calculado no OUTRO campo (o que o usuario esta digitando fica intocado).
-  useEffect(() => {
-    if (modo !== 'repeticao' || calc.error) return;
-    if (lastEdited === 'repeticoes') {
-      setGomosStr(String(calc.desenhosUnicos));
-    } else {
-      setRepeticoesStr(String(calc.repeticoes));
-    }
-  }, [calc, lastEdited, modo]);
-
-  const coneModel = useMemo(
-    () => (mold ? buildBalaoConeModel(mold.pontos, mold.quantidade_gomos) : null),
-    [mold]
-  );
-
-  const gomosNoLeque = Math.min(calc.desenhosUnicos, MAX_PAINEIS_RENDER);
-  const truncado = calc.desenhosUnicos > MAX_PAINEIS_RENDER;
-
-  /**
-   * O balao nao e feito de gomos-lente separados — e feito de 2 pecas
-   * planificadas: o CONE DO BICO (um leque so, fecha na ponta, abre pra
-   * baixo) e o CONE DA BOCA (outro leque, abre pra cima), encostando um no
-   * outro no ponto mais largo do molde. Cada raio dentro do leque e um
-   * gomo — o angulo de cada um vem da largura real medida naquela altura
-   * dividida pela distancia acumulada ate o apice (desenvolvimento de
-   * cone/tronco-de-cone, o mesmo principio de abrir um chapeu de
-   * aniversario numa folha plana).
-   */
-  const profile = useMemo(() => {
-    if (!mold) return null;
-    return buildMoldProfile(mold.pontos, sectionRatios, tacoConfigs);
-  }, [mold, sectionRatios, tacoConfigs]);
+  const coneModel = useMemo(() => {
+    if (!pontos || quantidadeGomos <= 0) return null;
+    return buildBalaoConeModel(pontos, quantidadeGomos);
+  }, [pontos, quantidadeGomos]);
 
   const preview = useMemo(() => {
-    if (!coneModel || gomosNoLeque <= 0 || !profile) {
-      return null;
-    }
+    if (!coneModel || gomosNoLeque <= 0 || erroFormulario) return null;
+    const n = Math.min(gomosNoLeque, MAX_PREVIEW_GOMOS);
 
     const maxHalfAngle = Math.max(
-      ...coneModel.bico.slices.map((s) => (s.larguraCm / Math.max(s.s, 0.0001)) * gomosNoLeque),
-      ...coneModel.boca.slices.map((s) => (s.larguraCm / Math.max(s.s, 0.0001)) * gomosNoLeque)
+      ...coneModel.bico.slices.map((s) => (s.larguraCm / Math.max(s.s, 0.0001)) * n),
+      ...coneModel.boca.slices.map((s) => (s.larguraCm / Math.max(s.s, 0.0001)) * n),
     ) / 2;
-    const larguraEstimadaCm =
-      2 * Math.sin(Math.min(maxHalfAngle, Math.PI)) * Math.max(coneModel.bico.raioTotalCm, coneModel.boca.raioTotalCm);
+    const larguraEst =
+      2 * Math.sin(Math.min(maxHalfAngle, Math.PI)) *
+      Math.max(coneModel.bico.raioTotalCm, coneModel.boca.raioTotalCm);
 
-    const padSide = Math.max(larguraEstimadaCm * 0.08, 2);
+    const pad = Math.max(larguraEst * 0.08, 2);
     const padOuter = Math.max(coneModel.bico.raioTotalCm * 0.02, 3);
-    const centerX = padSide + larguraEstimadaCm / 2;
-
+    const centerX = pad + larguraEst / 2;
     const apiceYBico = padOuter;
     const seamY = apiceYBico + coneModel.bico.raioTotalCm;
     const apiceYBoca = seamY + coneModel.boca.raioTotalCm;
 
-    const bicoFan = buildConeFan(coneModel.bico, gomosNoLeque, false, centerX, apiceYBico, profile, tacoConfigs, true);
-    const bocaFan = buildConeFan(coneModel.boca, gomosNoLeque, true, centerX, apiceYBoca, profile, tacoConfigs, false);
+    const bicoFan = buildConeFan(coneModel.bico, n, false, centerX, apiceYBico);
+    const bocaFan = buildConeFan(coneModel.boca, n, true, centerX, apiceYBoca);
 
-    const viewW = padSide * 2 + larguraEstimadaCm;
-    const viewH = apiceYBoca + padOuter;
+    const allX = [
+      ...bicoFan.outlinePoints.map(([x]) => x),
+      ...bocaFan.outlinePoints.map(([x]) => x),
+    ];
+    const allY = [
+      ...bicoFan.outlinePoints.map(([, y]) => y),
+      ...bocaFan.outlinePoints.map(([, y]) => y),
+    ];
 
-    return { bicoFan, bocaFan, seamY, viewW, viewH };
-  }, [coneModel, gomosNoLeque, profile, tacoConfigs]);
+    return {
+      bicoFan,
+      bocaFan,
+      seamY,
+      minX: Math.min(...allX),
+      minY: Math.min(...allY),
+      boxW: Math.max(...allX) - Math.min(...allX),
+      boxH: Math.max(...allY) - Math.min(...allY),
+    };
+  }, [coneModel, gomosNoLeque, erroFormulario]);
 
-  function handleDownloadPdf() {
-    if (!mold || calc.error || calc.desenhosUnicos <= 0) return;
+  function handleDownload() {
+    if (!pontos || gomosNoLeque <= 0 || erroFormulario) return;
     setDownloading(true);
     setDownloadError(null);
     try {
+      const nome = `Modelado ${tamanhoM}m ${quantidadeGomos}g`;
       const blob = buildRiscadoPdf({
-        nome: mold.nome,
-        modelo: mold.modelo,
+        nome,
+        modelo: "Modelado",
         quantidadeGomosTotal: quantidadeGomos,
-        modo,
-        repeticoes: calc.repeticoes,
-        desenhosUnicos: calc.desenhosUnicos,
-        pontos: mold.pontos,
-        tacoConfigs,
-        sectionRatios,
-        sectionColors,
+        modo: modo === "corrido" ? "individual" : "repeticao",
+        repeticoes: repeticoesReais,
+        desenhosUnicos: gomosNoLeque,
+        pontos,
+        tacoConfigs: EMPTY_TACO_CONFIGS,
+        sectionRatios: EMPTY_SECTION_RATIOS,
+        sectionColors: EMPTY_SECTION_COLORS,
       });
-      downloadBlob(blob, `${slugifyFilename(mold.nome)}-risco.pdf`);
+      downloadBlob(blob, `${slugifyFilename(nome)}-risco.pdf`);
     } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : 'Nao foi possivel gerar o PDF.');
+      setDownloadError(err instanceof Error ? err.message : "Nao foi possivel gerar o PDF.");
     } finally {
       setDownloading(false);
     }
   }
 
-  if (moldId == null) {
-    return (
-      <div className="plotter-empty">
-        <div className="plotter-empty-card">
-          <Ruler size={28} />
-          <h2>Plotter (Molde Riscado)</h2>
-          <p>
-            Selecione um molde na Galeria e clique em <strong>Plotar Risco</strong> para montar o risco dos
-            gomos do balao.
-          </p>
-          {onBackToGallery ? (
-            <button type="button" className="mold-add-point" onClick={onBackToGallery}>
-              <ArrowLeft size={16} />
-              Ir para Galeria de Moldes
-            </button>
-          ) : null}
-        </div>
-      </div>
-    );
-  }
-
-  const titleName = moldHint?.nome || mold?.nome || `Molde #${moldId}`;
-  const titleModel = moldHint?.modelo || mold?.modelo || '';
+  const strokeW = preview ? Math.max(preview.boxW * 0.004, 0.4) : 0.4;
+  const divStrokeW = preview ? Math.max(preview.boxW * 0.003, 0.25) : 0.25;
 
   return (
     <div className="plotter-page">
       <div className="plotter-toolbar">
         <div className="plotter-toolbar-text">
-          <h2>Plotter Riscado — {titleName}</h2>
-          <p>
-            {titleModel ? `${titleModel} · ` : ''}
-            {quantidadeGomos > 0 ? `${quantidadeGomos} gomos no molde` : ''}
-          </p>
+          <h2>Plotter &mdash; Molde Riscado</h2>
+          <p>Configure o balao e gere o leque com as linhas dos gomos para riscar.</p>
         </div>
         <div className="plotter-toolbar-actions">
-          {mold ? (
-            <button
-              type="button"
-              className="mold-save-button"
-              onClick={handleDownloadPdf}
-              disabled={downloading || !!calc.error || calc.desenhosUnicos <= 0}
-            >
-              {downloading ? <Loader2 size={16} className="mold-import-spinner" /> : <Download size={16} />}
-              {downloading ? 'Gerando...' : 'Baixar PDF (escala real)'}
-            </button>
-          ) : null}
-          {onBackToGallery ? (
-            <button type="button" className="mold-import-button plotter-back-btn" onClick={onBackToGallery}>
-              <ArrowLeft size={16} />
-              Voltar
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="mold-save-button"
+            onClick={handleDownload}
+            disabled={downloading || !!erroFormulario || gomosNoLeque <= 0}
+          >
+            {downloading ? <Loader2 size={16} className="mold-import-spinner" /> : <Download size={16} />}
+            {downloading ? "Gerando..." : "Baixar PDF (escala real)"}
+          </button>
         </div>
       </div>
 
-      {error ? <p className="mold-import-error">{error}</p> : null}
-      {downloadError ? <p className="mold-import-error">{downloadError}</p> : null}
+      {downloadError && <p className="mold-import-error">{downloadError}</p>}
 
-      {loading ? (
-        <p className="bandeira-size-hint">
-          <Loader2 size={14} className="mold-import-spinner" /> Carregando molde...
-        </p>
-      ) : mold ? (
-        <>
-          <div className="bandeira-create-panel">
-            <h4>Como o cliente vai desenhar</h4>
+      <div className="riscado-layout">
+        <div className="bandeira-create-panel riscado-config-panel">
 
-            <div className="rifa-form-section" style={{ padding: 0, border: 'none' }}>
-              <label className="riscado-modo-option">
+          <div className="riscado-field-group">
+            <h4>Modelo</h4>
+            <div className="riscado-modelo-options">
+              {MODELOS.map((m) => (
+                <label key={m.id} className={`riscado-modelo-card${modelo === m.id ? " active" : ""}`}>
+                  <input
+                    type="radio"
+                    name="modelo"
+                    value={m.id}
+                    checked={modelo === m.id}
+                    onChange={() => setModelo(m.id)}
+                  />
+                  <PenTool size={18} />
+                  <span>{m.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="riscado-field-group">
+            <h4>Dimensoes</h4>
+            <div className="bandeira-size-fields">
+              <label className="auth-field">
+                <span>Tamanho (metros)</span>
                 <input
-                  type="radio"
-                  name="modo-riscado"
-                  checked={modo === 'individual'}
-                  onChange={() => setModo('individual')}
+                  type="number"
+                  min={0.5}
+                  max={50}
+                  step={0.5}
+                  value={tamanhoStr}
+                  onChange={(e) => { setTamanhoStr(e.target.value); setDownloadError(null); }}
+                  placeholder="Ex: 10"
                 />
-                <span>
-                  <strong>Desenho diferente em cada gomo</strong> — sem repeticao, desenha os {quantidadeGomos || '?'}{' '}
-                  gomos um por um.
-                </span>
               </label>
-              <label className="riscado-modo-option">
+              <label className="auth-field">
+                <span>Quantidade de gomos</span>
                 <input
-                  type="radio"
-                  name="modo-riscado"
-                  checked={modo === 'repeticao'}
-                  onChange={() => setModo('repeticao')}
+                  type="number"
+                  min={4}
+                  max={256}
+                  step={1}
+                  value={gomosStr}
+                  onChange={(e) => { setGomosStr(e.target.value); setDownloadError(null); }}
+                  placeholder="Ex: 32"
                 />
-                <span>
-                  <strong>Repetir um desenho</strong> — desenha so uma parte e repete ao redor do balao.
-                </span>
+              </label>
+            </div>
+          </div>
+
+          <div className="riscado-field-group">
+            <h4>Como vai ser feito</h4>
+            <div className="riscado-modo-grid">
+              <label className={`riscado-modo-card${modo === "corrido" ? " active" : ""}`}>
+                <input type="radio" name="modo-layout" checked={modo === "corrido"} onChange={() => setModo("corrido")} />
+                <div className="riscado-modo-icon">&#9644;&#9644;&#9644;</div>
+                <strong>Corrido</strong>
+                <span>Um leque unico com todos os {quantidadeGomos || "?"} gomos</span>
+              </label>
+              <label className={`riscado-modo-card${modo === "repeticao" ? " active" : ""}`}>
+                <input type="radio" name="modo-layout" checked={modo === "repeticao"} onChange={() => setModo("repeticao")} />
+                <div className="riscado-modo-icon">&#9644;&#9644; x N</div>
+                <strong>Repeticao</strong>
+                <span>Desenha uma parte e repete ao redor</span>
+              </label>
+              <label className={`riscado-modo-card${modo === "espelho" ? " active" : ""}`}>
+                <input type="radio" name="modo-layout" checked={modo === "espelho"} onChange={() => setModo("espelho")} />
+                <div className="riscado-modo-icon">&#9668;&#9644;&#9644;&#9658;</div>
+                <strong>Espelho</strong>
+                <span>4 repeticoes simetricas</span>
               </label>
             </div>
 
-            {modo === 'repeticao' ? (
-              <>
-                <div className="bandeira-size-fields">
-                  <label className="auth-field">
-                    <span>Repeticoes</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={quantidadeGomos || undefined}
-                      value={repeticoesStr}
-                      onChange={(e) => {
-                        setLastEdited('repeticoes');
-                        setRepeticoesStr(e.target.value);
-                      }}
-                    />
-                  </label>
-                  <label className="auth-field">
-                    <span>Gomos para desenhar</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={quantidadeGomos || undefined}
-                      value={gomosStr}
-                      onChange={(e) => {
-                        setLastEdited('gomos');
-                        setGomosStr(e.target.value);
-                      }}
-                    />
-                  </label>
-                </div>
-
-                {divisoresValidos.length > 0 ? (
-                  <p className="bandeira-size-hint">
-                    Repeticoes que fecham certinho os {quantidadeGomos} gomos:{' '}
-                    {divisoresValidos.map((d, i) => (
-                      <span key={d}>
-                        <button
-                          type="button"
-                          className="riscado-divisor-chip"
-                          onClick={() => {
-                            setLastEdited('repeticoes');
-                            setRepeticoesStr(String(d));
-                          }}
-                        >
-                          {d}
-                        </button>
-                        {i < divisoresValidos.length - 1 ? ' ' : ''}
-                      </span>
+            {modo === "repeticao" && (
+              <div style={{ marginTop: "0.75rem" }}>
+                <label className="auth-field">
+                  <span>Numero de repeticoes</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={quantidadeGomos || 256}
+                    value={repeticoesStr}
+                    onChange={(e) => { setRepeticoesStr(e.target.value); setDownloadError(null); }}
+                  />
+                </label>
+                {divisores.length > 0 && (
+                  <p className="bandeira-size-hint" style={{ marginTop: "0.5rem" }}>
+                    Repeticoes que fecham os {quantidadeGomos} gomos:{" "}
+                    {divisores.map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        className="riscado-divisor-chip"
+                        onClick={() => setRepeticoesStr(String(d))}
+                      >
+                        {d}
+                      </button>
                     ))}
                   </p>
-                ) : (
-                  <p className="mold-import-error">Nenhuma repeticao fecha certinho pra esse molde.</p>
                 )}
-              </>
-            ) : null}
-
-            {calc.error ? (
-              <p className="mold-import-error">{calc.error}</p>
-            ) : (
-              <p className="bandeira-size-hint">
-                {modo === 'individual'
-                  ? `O cliente desenha os ${quantidadeGomos} gomos, cada um diferente.`
-                  : `O cliente desenha ${calc.desenhosUnicos} gomo${calc.desenhosUnicos === 1 ? '' : 's'} e esse desenho se repete ${calc.repeticoes}x ao redor do balao (${calc.repeticoes} × ${calc.desenhosUnicos} = ${calc.repeticoes * calc.desenhosUnicos} gomos).`}
-              </p>
+              </div>
             )}
           </div>
 
-          {truncado ? (
-            <p className="mold-import-error">
-              Mostrando so os primeiros {MAX_PAINEIS_RENDER} gomos aqui no leque da previa (o desenho pede{' '}
-              {calc.desenhosUnicos}) — o calculo continua certo, so a previa que corta pra nao travar a tela.
-            </p>
-          ) : null}
-
-          {preview ? (
-            <div className="riscado-preview-scroll">
-              <svg
-                viewBox={`0 0 ${preview.viewW} ${preview.viewH}`}
-                className="riscado-preview-fan-svg"
-                role="img"
-                aria-label="Cone do bico e cone da boca planificados, com as linhas de cada gomo"
-              >
-                {/* Background outline */}
-                <path d={pointsToClosedPathD(preview.bicoFan.outlinePoints)} fill="#0f1726" stroke="none" />
-                <path d={pointsToClosedPathD(preview.bocaFan.outlinePoints)} fill="#0f1726" stroke="none" />
-
-                {/* 1. Taco Fills */}
-                {preview.bicoFan.tacoFills.map((fill, i) => (
-                  <path key={`bico-fill-${i}`} d={pointsToClosedPathD(fill.points)} fill={fill.color} stroke="none" />
-                ))}
-                {preview.bocaFan.tacoFills.map((fill, i) => (
-                  <path key={`boca-fill-${i}`} d={pointsToClosedPathD(fill.points)} fill={fill.color} stroke="none" />
-                ))}
-
-                {/* 2. Gomo Outlines */}
-                <path d={pointsToClosedPathD(preview.bicoFan.outlinePoints)} fill="none" stroke="#77e6f2" strokeWidth={Math.max(preview.viewW * 0.004, 0.4)} />
-                <path d={pointsToClosedPathD(preview.bocaFan.outlinePoints)} fill="none" stroke="#77e6f2" strokeWidth={Math.max(preview.viewW * 0.004, 0.4)} />
-
-                {/* 3. Horizontal Taco Lines */}
-                {preview.bicoFan.horizontalTacoLines.map((pts, i) => (
-                  <polyline key={`bico-taco-h-${i}`} points={pointsToPolylineAttr(pts)} fill="none" stroke="#101b2b" opacity={0.5} strokeWidth={Math.max(preview.viewW * 0.0018, 0.15)} />
-                ))}
-                {preview.bocaFan.horizontalTacoLines.map((pts, i) => (
-                  <polyline key={`boca-taco-h-${i}`} points={pointsToPolylineAttr(pts)} fill="none" stroke="#101b2b" opacity={0.5} strokeWidth={Math.max(preview.viewW * 0.0018, 0.15)} />
-                ))}
-
-                {/* 4. Vertical Taco Lines */}
-                {preview.bicoFan.verticalTacoLines.map((pts, i) => (
-                  <polyline key={`bico-taco-v-${i}`} points={pointsToPolylineAttr(pts)} fill="none" stroke="#101b2b" opacity={0.5} strokeWidth={Math.max(preview.viewW * 0.0018, 0.15)} />
-                ))}
-                {preview.bocaFan.verticalTacoLines.map((pts, i) => (
-                  <polyline key={`boca-taco-v-${i}`} points={pointsToPolylineAttr(pts)} fill="none" stroke="#101b2b" opacity={0.5} strokeWidth={Math.max(preview.viewW * 0.0018, 0.15)} />
-                ))}
-
-                {/* 5. Gomo Divisoria Lines */}
-                {preview.bicoFan.divisoriasPoints.map((pts, i) => (
-                  <polyline
-                    key={`bico-div-${i}`}
-                    points={pointsToPolylineAttr(pts)}
-                    fill="none"
-                    stroke="#101b2b"
-                    strokeWidth={Math.max(preview.viewW * 0.003, 0.25)}
-                  />
-                ))}
-                {preview.bocaFan.divisoriasPoints.map((pts, i) => (
-                  <polyline
-                    key={`boca-div-${i}`}
-                    points={pointsToPolylineAttr(pts)}
-                    fill="none"
-                    stroke="#101b2b"
-                    strokeWidth={Math.max(preview.viewW * 0.003, 0.25)}
-                  />
-                ))}
-                <line
-                  x1={0}
-                  x2={preview.viewW}
-                  y1={preview.seamY}
-                  y2={preview.seamY}
-                  stroke="#f062b8"
-                  strokeDasharray={`${preview.viewW * 0.006},${preview.viewW * 0.004}`}
-                  strokeWidth={Math.max(preview.viewW * 0.002, 0.15)}
-                />
-              </svg>
-              <p className="bandeira-size-hint">
-                Cone do bico (fecha em cima) + cone da boca (abre embaixo), encostando no ponto mais largo do
-                molde. Cada linha e a divisoria entre um gomo e o vizinho.
-              </p>
+          {erroFormulario ? (
+            <p className="mold-import-error">{erroFormulario}</p>
+          ) : gomosNoLeque > 0 ? (
+            <div className="riscado-resumo">
+              {modo === "corrido" ? (
+                <p>Leque com <strong>todos os {gomosNoLeque} gomos</strong> &mdash; imprime de uma vez.</p>
+              ) : (
+                <p>
+                  O cliente desenha <strong>{gomosNoLeque} gomos</strong> e esse leque se repete{" "}
+                  <strong>{repeticoesReais}x</strong> ao redor do balao{" "}
+                  ({repeticoesReais} x {gomosNoLeque} = {repeticoesReais * gomosNoLeque} gomos
+                  {modo === "espelho" ? ", com espelho" : ""}).
+                </p>
+              )}
             </div>
           ) : null}
-        </>
-      ) : null}
+        </div>
+
+        <div className="riscado-preview-area">
+          {preview ? (
+            <>
+              <div className="riscado-preview-scroll">
+                <svg
+                  viewBox={`${preview.minX - 4} ${preview.minY - 4} ${preview.boxW + 8} ${preview.boxH + 8}`}
+                  className="riscado-preview-fan-svg riscado-preview-white"
+                  role="img"
+                  aria-label="Leque dos gomos planificados"
+                >
+                  <rect
+                    x={preview.minX - 4}
+                    y={preview.minY - 4}
+                    width={preview.boxW + 8}
+                    height={preview.boxH + 8}
+                    fill="white"
+                  />
+                  <path d={pointsToClosedPathD(preview.bicoFan.outlinePoints)} fill="white" stroke="none" />
+                  <path d={pointsToClosedPathD(preview.bocaFan.outlinePoints)} fill="white" stroke="none" />
+
+                  {preview.bicoFan.divisoriasPoints.map((pts, i) => (
+                    <polyline
+                      key={`bico-div-${i}`}
+                      points={pointsToPolylineAttr(pts)}
+                      fill="none"
+                      stroke="#222"
+                      strokeWidth={divStrokeW}
+                    />
+                  ))}
+                  {preview.bocaFan.divisoriasPoints.map((pts, i) => (
+                    <polyline
+                      key={`boca-div-${i}`}
+                      points={pointsToPolylineAttr(pts)}
+                      fill="none"
+                      stroke="#222"
+                      strokeWidth={divStrokeW}
+                    />
+                  ))}
+
+                  <path d={pointsToClosedPathD(preview.bicoFan.outlinePoints)} fill="none" stroke="#111" strokeWidth={strokeW} />
+                  <path d={pointsToClosedPathD(preview.bocaFan.outlinePoints)} fill="none" stroke="#111" strokeWidth={strokeW} />
+
+                  <line
+                    x1={preview.minX - 2}
+                    x2={preview.minX + preview.boxW + 2}
+                    y1={preview.seamY}
+                    y2={preview.seamY}
+                    stroke="#e11d48"
+                    strokeDasharray={`${preview.boxW * 0.006},${preview.boxW * 0.004}`}
+                    strokeWidth={Math.max(preview.boxW * 0.002, 0.15)}
+                  />
+                </svg>
+              </div>
+              <p className="bandeira-size-hint" style={{ textAlign: "center", marginTop: "0.5rem" }}>
+                {gomosNoLeque > MAX_PREVIEW_GOMOS
+                  ? `Preview mostrando ${MAX_PREVIEW_GOMOS} de ${gomosNoLeque} gomos — o PDF tera todos.`
+                  : "Cone do bico (cima) + cone da boca (baixo). Linha vermelha = ponto de encontro."}
+              </p>
+            </>
+          ) : (
+            <div className="riscado-preview-empty">
+              <PenTool size={36} opacity={0.3} />
+              <p>Preencha os dados ao lado para visualizar o leque.</p>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -1137,3 +1137,66 @@ export function computeSectionTacoTotals(
 function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
+
+/**
+ * Gera os pontos do perfil do modelo "Modelado" (balao junino padrao) a
+ * partir da altura total em metros. O formato segue a proporcao classica:
+ * boca 25%, bojo 45%, bico 30%, com a largura maxima no topo do bojo.
+ *
+ * Cada ponto e { altura_cm, largura_meia_cm } — o mesmo formato que vem
+ * do banco de dados, compativel com buildProfilePoints() e buildBalaoConeModel().
+ *
+ * Os valores de largura_meia_cm sao normalizados pra que a circunferencia
+ * no ponto mais largo (quantidadeGomos * 2 * largura_meia_cm) seja
+ * proporcional a altura total (proporcao 1:1 aproximada).
+ */
+export function buildModeladoProfilePoints(
+  alturaMetros: number,
+  quantidadeGomos: number
+): MoldPoint[] {
+  const H = alturaMetros * 100; // cm
+
+  // No balao junino modelado, o ponto mais largo tem circunferencia ~= altura total.
+  // Circunferencia = quantidadeGomos * 2 * meiaLargura => meiaLargura = H / (quantidadeGomos * 2)
+  // Porem para o leque planificado, o que importa e a largura de UM gomo.
+  // Usamos meiaLargura_max = H / (2 * PI) que e o raio real do baloo no ponto mais largo
+  // quando consideramos que circunferencia = H (proporcao 1:1 do modelado).
+  const meiaLarguraMax = H / (2 * Math.PI);
+
+  // Pontos normalizados [fracaoAltura, fracaoMeiaLargura]
+  // 0 = base (boca), 1 = topo (bico)
+  // Perfil do balao junino modelado: formato de lente larga, abrindo rapido
+  // na boca, chegando ao maximo no equador (~45% da altura) e afinando
+  // progressivamente ate a ponta do bico.
+  const normalized: Array<[number, number]> = [
+    [0.00, 0.12],  // ponta da boca — quase fechada
+    [0.04, 0.38],  // boca abrindo rapido
+    [0.10, 0.65],  // boca se abrindo
+    [0.18, 0.84],  // final da boca
+    [0.28, 0.95],  // entrando no bojo
+    [0.38, 1.00],  // ponto mais largo (equador)
+    [0.50, 0.98],  // bojo afinando levemente
+    [0.60, 0.90],  // inicio do bico
+    [0.70, 0.76],  // bico afinando
+    [0.80, 0.55],  // bico mais estreito
+    [0.90, 0.30],  // proximo da ponta
+    [0.96, 0.10],  // quase na ponta
+    [1.00, 0.00],  // ponta do bico
+  ];
+
+  const points: MoldPoint[] = [];
+  let prevAlturaAcum = 0;
+  for (const [fracY, fracW] of normalized) {
+    const alturaAcum = fracY * H;
+    const alturaSeg = alturaAcum - prevAlturaAcum;
+    const larguraMeia = round1(fracW * meiaLarguraMax);
+    points.push({
+      altura_cm: round1(Math.max(0.1, alturaSeg)),
+      largura_meia_cm: larguraMeia,
+    });
+    prevAlturaAcum = alturaAcum;
+  }
+
+  void quantidadeGomos;
+  return points;
+}
