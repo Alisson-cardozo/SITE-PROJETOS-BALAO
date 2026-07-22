@@ -490,10 +490,17 @@ export function expandSectionPartitions(
   if (hasManualTacos) {
     let yBottom = secao.inicioCm;
     return parts.map((partition, index) => {
+      const isLast = index === n - 1;
       const tacosSubindo = partition.tacosSubindo ?? 10;
       const alturaCm = round1(tacosSubindo * partition.alturaTacoCm);
       const inicioCm = round1(yBottom);
-      const fimCm = round1(Math.min(secao.fimCm, yBottom + alturaCm));
+      
+      let fimCm = round1(yBottom + alturaCm);
+      if (isLast && fimCm >= secao.fimCm - partition.alturaTacoCm) {
+        fimCm = secao.fimCm;
+      } else {
+        fimCm = round1(Math.min(secao.fimCm, fimCm));
+      }
       yBottom = fimCm;
 
       return {
