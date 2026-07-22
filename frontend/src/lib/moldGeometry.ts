@@ -262,6 +262,7 @@ export interface SectionPartition {
   id: string;
   tacosPorGomo: number;
   alturaTacoCm: number;
+  tacosSubindo?: number;
   /**
    * Peso relativo da ALTURA desta parte na secao.
    * Ex.: pesos 50 e 50 → metade cada; 60 e 40 → 60%/40% da altura.
@@ -294,6 +295,7 @@ export const PARTITION_DIVISION_COLORS = [
 export function createPartition(
   tacosPorGomo = 4,
   alturaTacoCm = 5,
+  tacosSubindo = 10,
   cor = '#f4e64a',
   corDivisao = PARTITION_DIVISION_COLORS[0],
   peso = 1
@@ -302,6 +304,7 @@ export function createPartition(
     id: `p-${Math.random().toString(36).slice(2, 9)}`,
     tacosPorGomo: Math.max(1, Math.floor(tacosPorGomo) || 1),
     alturaTacoCm: Math.max(1, Math.floor(alturaTacoCm) || 1),
+    tacosSubindo: Math.max(1, Math.floor(tacosSubindo) || 1),
     peso: Math.max(0.01, Number(peso) || 1),
     cor,
     corDivisao,
@@ -310,9 +313,9 @@ export function createPartition(
 
 export function createDefaultTacoConfigs(_bainhaCm = 1): SectionTacoConfigMap {
   return {
-    boca: { partitions: [createPartition(4, 5, SECTION_COLORS.boca, PARTITION_DIVISION_COLORS[0], 1)] },
-    bojo: { partitions: [createPartition(8, 5, SECTION_COLORS.bojo, PARTITION_DIVISION_COLORS[1], 1)] },
-    bico: { partitions: [createPartition(4, 5, SECTION_COLORS.bico, PARTITION_DIVISION_COLORS[2], 1)] },
+    boca: { partitions: [createPartition(4, 5, 10, SECTION_COLORS.boca, PARTITION_DIVISION_COLORS[0], 1)] },
+    bojo: { partitions: [createPartition(8, 5, 20, SECTION_COLORS.bojo, PARTITION_DIVISION_COLORS[1], 1)] },
+    bico: { partitions: [createPartition(4, 5, 10, SECTION_COLORS.bico, PARTITION_DIVISION_COLORS[2], 1)] },
   };
 }
 
@@ -479,18 +482,14 @@ export function expandSectionPartitions(
     return [];
   }
   const n = parts.length;
-  const weights = parts.map((p) => Math.max(0.01, Number(p.peso) || 1));
-  const weightSum = weights.reduce((s, w) => s + w, 0);
 
-  let yTop = secao.fimCm;
+  let yBottom = secao.inicioCm;
   return parts.map((partition, index) => {
-    const isLast = index === n - 1;
-    const frac = weights[index] / weightSum;
-    const alturaRaw = isLast ? yTop - secao.inicioCm : secao.alturaCm * frac;
-    const alturaCm = round1(Math.max(0, isLast ? yTop - secao.inicioCm : alturaRaw));
-    const fimCm = round1(yTop);
-    const inicioCm = round1(isLast ? secao.inicioCm : yTop - alturaCm);
-    yTop = inicioCm;
+    const tacosSubindo = partition.tacosSubindo ?? 10;
+    const alturaCm = round1(tacosSubindo * partition.alturaTacoCm);
+    const inicioCm = round1(yBottom);
+    const fimCm = round1(Math.min(secao.fimCm, yBottom + alturaCm));
+    yBottom = fimCm;
 
     return {
       ...secao,

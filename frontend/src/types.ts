@@ -90,6 +90,7 @@ export interface MoldTacoPartitionData {
   id: string;
   tacosPorGomo: number;
   alturaTacoCm: number;
+  tacosSubindo?: number;
   peso: number;
   cor: string;
   corDivisao: string;

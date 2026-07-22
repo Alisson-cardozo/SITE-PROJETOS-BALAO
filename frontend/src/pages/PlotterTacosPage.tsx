@@ -4,8 +4,6 @@ import { GomoTacoPreview } from '../components/GomoTacoPreview';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import {
-  alturaTacoToKeepTotal,
-  balancePartitionTotals,
   buildMoldProfile,
   buildTacoDivisions,
   createDefaultTacoConfigs,
@@ -13,8 +11,6 @@ import {
   DEFAULT_SECTION_RATIOS,
   expandSectionPartitions,
   PARTITION_DIVISION_COLORS,
-  ratiosFromSectionTotals,
-  redistributePartitionPesos,
   SECTION_COLORS,
   type MoldSection,
   type SectionPartition,
@@ -126,7 +122,18 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
           setSectionRatios({ ...DEFAULT_SECTION_RATIOS });
         } else {
           setSectionColors(DEFAULT_COLORS);
-          setTacoConfigs(createDefaultTacoConfigs(moldResponse.data.bainha_cm || 1));
+          const defaultConfigs = createDefaultTacoConfigs(moldResponse.data.bainha_cm || 1);
+          const tempProfile = buildMoldProfile(moldResponse.data.pontos, DEFAULT_SECTION_RATIOS);
+          if (tempProfile) {
+            for (const secao of tempProfile.secoes) {
+              const cfg = defaultConfigs[secao.id];
+              if (cfg && cfg.partitions[0]) {
+                const part = cfg.partitions[0];
+                part.tacosSubindo = Math.max(1, Math.floor(secao.alturaCm / part.alturaTacoCm));
+              }
+            }
+          }
+          setTacoConfigs(defaultConfigs);
           setSectionRatios({ ...DEFAULT_SECTION_RATIOS });
         }
       })
@@ -203,16 +210,7 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
       });
   }, [profile, tacoConfigs]);
 
-  const totalsBySection = useMemo(() => {
-    const map: Record<MoldSection['id'], number> = { boca: 0, bojo: 0, bico: 0 };
-    if (!sectionStats) {
-      return map;
-    }
-    for (const row of sectionStats) {
-      map[row.secao.id] = row.totalTacos;
-    }
-    return map;
-  }, [sectionStats]);
+
 
   function updatePartitionMeta(
     sectionId: MoldSection['id'],
@@ -233,256 +231,72 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
     }
   }
 
-  /** Total de tacos da parte: as outras partes da secao compensam (50|50 → 60|40). */
-  function updatePartitionTotal(
+  function updatePartitionSubindo(
     sectionId: MoldSection['id'],
     partitionId: string,
-    nextTotal: number
+    nextSubindo: number
   ) {
-    if (!sectionStats || !profile) {
-      return;
-    }
-    const row = sectionStats.find((s) => s.secao.id === sectionId);
-    if (!row) {
-      return;
-    }
-
-    const parts = tacoConfigs[sectionId].partitions;
-    const idx = parts.findIndex((p) => p.id === partitionId);
-    if (idx < 0) {
-      return;
-    }
-
-    const currentTotals = row.bandStats.map((b) => b.divisions.totalTacos);
-    const sectionBudget = currentTotals.reduce((s, t) => s + t, 0);
-
-    // Uma unica parte na secao → muda o total da secao inteira (Boca↔Bojo ou Bico↔Bojo)
-    if (parts.length === 1) {
-      applySectionTotalChange(sectionId, Math.max(parts[0].tacosPorGomo, Math.floor(nextTotal) || 1));
-      return;
-    }
-
-    const balanced = balancePartitionTotals(parts, currentTotals, idx, nextTotal);
-    const withPesos = redistributePartitionPesos(parts, balanced);
-
-    // Ajusta altura do taco para caber o total-alvo em cada faixa (apos o novo peso)
-    const secao = profile.secoes.find((s) => s.id === sectionId);
-    if (!secao) {
-      setTacoConfigs((prev) => ({ ...prev, [sectionId]: { partitions: withPesos } }));
-      return;
-    }
-
-    const bands = expandSectionPartitions(secao, { partitions: withPesos });
-    const tuned = withPesos.map((p, i) => {
-      const h = bands[i]?.alturaCm ?? secao.alturaCm / parts.length;
-      const target = balanced[i];
-      const at = alturaTacoToKeepTotal(h, target, p.tacosPorGomo);
-      return { ...p, alturaTacoCm: at };
-    });
-
-    setTacoConfigs((prev) => ({ ...prev, [sectionId]: { partitions: tuned } }));
-
-    // Se a soma da secao mudou (clamp), e for boca/bojo/bico, nao mexe em ratio aqui —
-    // so redistribui interno. sectionBudget preservado por balancePartitionTotals.
-    void sectionBudget;
-  }
-
-  /**
-   * Muda o total de uma secao e rebalanceia a altura Boca↔Bojo (ou Bico↔Bojo).
-   * Ex.: mais tacos na Boca → Boca maior, Bojo menor.
-   */
-  function applySectionTotalChange(sectionId: MoldSection['id'], nextTotal: number) {
-    if (!sectionStats || !mold) {
-      return;
-    }
-
-    const parts = tacoConfigs[sectionId].partitions;
-    const part0 = parts[0];
-    if (!part0) {
-      return;
-    }
-
-    const currentTotals: Record<MoldSection['id'], number> = { ...totalsBySection };
-    const minTotal = Math.max(1, part0.tacosPorGomo);
-
-    // Par que compensa: Boca↔Bojo; Bico↔Bojo
-    const donor: MoldSection['id'] = sectionId === 'bojo' ? 'boca' : 'bojo';
-    const donorParts = tacoConfigs[donor].partitions;
-    const donorMin = Math.max(1, donorParts[0]?.tacosPorGomo ?? 1) * Math.max(1, donorParts.length);
-    const pairBudget = currentTotals[sectionId] + currentTotals[donor];
-    const clamped = Math.min(
-      Math.max(minTotal, Math.floor(nextTotal) || minTotal),
-      Math.max(minTotal, pairBudget - donorMin)
-    );
-    const donorTotal = Math.max(donorMin, pairBudget - clamped);
-
-    currentTotals[sectionId] = clamped;
-    currentTotals[donor] = donorTotal;
-
-    const nextRatios = ratiosFromSectionTotals(sectionRatios, currentTotals, sectionId, donor);
-    setSectionRatios(nextRatios);
-
-    const nextProfile = buildMoldProfile(mold.pontos, nextRatios);
-    if (!nextProfile) {
-      return;
-    }
-
-    setTacoConfigs((prev) => {
-      const next = { ...prev };
-
-      // Secao alterada: 1 parte → ajusta altura do taco; N partes → escala pesos
-      next[sectionId] = tuneSectionToTotal(
-        next[sectionId].partitions,
-        nextProfile.secoes.find((s) => s.id === sectionId)!,
-        clamped,
-        sectionStats.find((s) => s.secao.id === sectionId)?.bandStats.map((b) => b.divisions.totalTacos)
-      );
-
-      next[donor] = tuneSectionToTotal(
-        next[donor].partitions,
-        nextProfile.secoes.find((s) => s.id === donor)!,
-        donorTotal,
-        sectionStats.find((s) => s.secao.id === donor)?.bandStats.map((b) => b.divisions.totalTacos)
-      );
-
-      return next;
-    });
-  }
-
-  /** Ajusta pesos + alturaTaco de uma secao para caber `targetTotal` na altura dada. */
-  function tuneSectionToTotal(
-    partitions: SectionPartition[],
-    secao: MoldSection,
-    targetTotal: number,
-    previousTotals?: number[]
-  ): { partitions: SectionPartition[] } {
-    if (partitions.length === 1) {
-      const p = partitions[0];
-      const at = alturaTacoToKeepTotal(secao.alturaCm, targetTotal, p.tacosPorGomo);
-      return {
-        partitions: [{ ...p, alturaTacoCm: at, peso: Math.max(0.01, targetTotal) }],
-      };
-    }
-
-    const prev = previousTotals ?? partitions.map((p) => p.tacosPorGomo * 4);
-    const prevSum = prev.reduce((s, t) => s + Math.max(0, t), 0) || 1;
-    const scaled = prev.map((t, i) => {
-      const min = partitions[i].tacosPorGomo;
-      return Math.max(min, Math.round((Math.max(0, t) / prevSum) * targetTotal));
-    });
-    const scaledSum = scaled.reduce((s, t) => s + t, 0);
-    if (scaled.length > 0 && scaledSum !== targetTotal) {
-      scaled[scaled.length - 1] = Math.max(
-        partitions[scaled.length - 1].tacosPorGomo,
-        scaled[scaled.length - 1] + (targetTotal - scaledSum)
-      );
-    }
-
-    const withPesos = redistributePartitionPesos(partitions, scaled);
-    const bands = expandSectionPartitions(secao, { partitions: withPesos });
-    const tuned = withPesos.map((p, i) => ({
-      ...p,
-      alturaTacoCm: alturaTacoToKeepTotal(bands[i]?.alturaCm ?? secao.alturaCm, scaled[i], p.tacosPorGomo),
-    }));
-    return { partitions: tuned };
-  }
-
-  /**
-   * Tacos por gomo: NAO trava o total.
-   * Menos tacos/gomo → grade sobe mais no bico (mais largura util) →
-   * mais fileiras "subindo" e total MAIOR com a mesma altura de taco.
-   */
-  function updateTacosPorGomo(sectionId: MoldSection['id'], partitionId: string, nextTpg: number) {
     setTacoConfigs((prev) => ({
       ...prev,
       [sectionId]: {
         partitions: prev[sectionId].partitions.map((p) =>
-          p.id === partitionId
-            ? {
-                ...p,
-                tacosPorGomo: nextTpg,
-                // mantem a altura do taco escolhida — a quantidade sobe/desce sozinha
-              }
-            : p
+          p.id === partitionId ? { ...p, tacosSubindo: nextSubindo } : p
         ),
       },
     }));
   }
 
-  /**
-   * Altura do taco: muda o total da parte → redistribui nas outras partes
-   * (ou Boca↔Bojo se for secao unica).
-   */
-  function updateAlturaTaco(sectionId: MoldSection['id'], partitionId: string, nextAltura: number) {
-    if (!sectionStats) {
-      return;
-    }
-    const row = sectionStats.find((s) => s.secao.id === sectionId);
-    if (!row) {
-      return;
-    }
-    const bandIndex = row.bandStats.findIndex((b) => b.band.partition.id === partitionId);
-    if (bandIndex < 0) {
-      return;
-    }
-    const band = row.bandStats[bandIndex];
-    const tpg = band.band.partition.tacosPorGomo;
-    const rows = Math.max(1, Math.floor(band.band.alturaCm / Math.max(1, nextAltura)));
-    const newTotal = rows * tpg;
-
-    if (row.config.partitions.length === 1) {
-      // Rebalanceia secao inteira (Boca↔Bojo / Bico↔Bojo) com o novo total
-      applySectionTotalChange(sectionId, newTotal);
-      return;
-    }
-
-    const parts = tacoConfigs[sectionId].partitions.map((p) =>
-      p.id === partitionId ? { ...p, alturaTacoCm: nextAltura } : p
-    );
-    const currentTotals = row.bandStats.map((b) => b.divisions.totalTacos);
-    const balanced = balancePartitionTotals(parts, currentTotals, bandIndex, newTotal);
-    const withPesos = redistributePartitionPesos(parts, balanced);
-
-    const secao = row.secao;
-    const bands = expandSectionPartitions(secao, { partitions: withPesos });
-    const tuned = withPesos.map((p, i) => {
-      if (i === bandIndex) {
-        return { ...p, alturaTacoCm: nextAltura };
-      }
-      const h = bands[i]?.alturaCm ?? secao.alturaCm / parts.length;
-      return {
-        ...p,
-        alturaTacoCm: alturaTacoToKeepTotal(h, balanced[i], p.tacosPorGomo),
-      };
-    });
-
-    setTacoConfigs((prev) => ({ ...prev, [sectionId]: { partitions: tuned } }));
+  function updatePartitionAlturaTaco(
+    sectionId: MoldSection['id'],
+    partitionId: string,
+    nextAltura: number
+  ) {
+    setTacoConfigs((prev) => ({
+      ...prev,
+      [sectionId]: {
+        partitions: prev[sectionId].partitions.map((p) =>
+          p.id === partitionId ? { ...p, alturaTacoCm: nextAltura } : p
+        ),
+      },
+    }));
   }
 
-  function addPartition(sectionId: MoldSection['id'], secaoAlturaCm: number) {
+  function updatePartitionTacosPorGomo(
+    sectionId: MoldSection['id'],
+    partitionId: string,
+    nextTpg: number
+  ) {
+    setTacoConfigs((prev) => ({
+      ...prev,
+      [sectionId]: {
+        partitions: prev[sectionId].partitions.map((p) =>
+          p.id === partitionId ? { ...p, tacosPorGomo: nextTpg } : p
+        ),
+      },
+    }));
+  }
+
+  function addPartition(sectionId: MoldSection['id'], _secaoAlturaCm: number) {
     setTacoConfigs((prev) => {
       const current = prev[sectionId].partitions;
       if (current.length >= MAX_PARTITIONS) {
         return prev;
       }
-      const last = current[current.length - 1] ?? createPartition();
+      const last = current[current.length - 1];
       const nextIndex = current.length;
       const corNova = PART_FILL_COLORS[(nextIndex + sectionColorOffset(sectionId)) % PART_FILL_COLORS.length];
       const corDivisao = PARTITION_DIVISION_COLORS[nextIndex % PARTITION_DIVISION_COLORS.length];
-      // Divide pesos igualmente (50|50, 33|33|33...)
-      const equalPeso = 1;
-      const existing = current.map((p) => ({ ...p, peso: equalPeso }));
       const created = createPartition(
-        last.tacosPorGomo,
-        Math.min(last.alturaTacoCm, Math.max(1, Math.floor(secaoAlturaCm / (current.length + 1)))),
+        last?.tacosPorGomo ?? 4,
+        last?.alturaTacoCm ?? 5,
+        last?.tacosSubindo ?? 10,
         corNova,
-        corDivisao,
-        equalPeso
+        corDivisao
       );
       return {
         ...prev,
         [sectionId]: {
-          partitions: [...existing, created],
+          partitions: [...current, created],
         },
       };
     });
@@ -495,11 +309,10 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
         return prev;
       }
       const next = current.filter((p) => p.id !== partitionId);
-      // redistribui pesos iguais
       return {
         ...prev,
         [sectionId]: {
-          partitions: next.map((p) => ({ ...p, peso: 1 })),
+          partitions: next,
         },
       };
     });
@@ -690,16 +503,15 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
                                   min={1}
                                   step={1}
                                   inputMode="numeric"
-                                  defaultValue={divisions.quantidadeVertical}
-                                  key={`subindo-${partition.id}-${divisions.quantidadeVertical}`}
+                                  defaultValue={partition.tacosSubindo}
+                                  key={`subindo-${partition.id}-${partition.tacosSubindo}`}
                                   onBlur={(event) => {
-                                    const nextSubindo = Math.max(
+                                    const next = Math.max(
                                       1,
-                                      Math.floor(Number(event.target.value)) || divisions.quantidadeVertical
+                                      Math.floor(Number(event.target.value)) || partition.tacosSubindo || 10
                                     );
-                                    const nextTotal = nextSubindo * partition.tacosPorGomo;
-                                    if (nextSubindo !== divisions.quantidadeVertical) {
-                                      updatePartitionTotal(secao.id, partition.id, nextTotal);
+                                    if (next !== partition.tacosSubindo) {
+                                      updatePartitionSubindo(secao.id, partition.id, next);
                                     }
                                   }}
                                   onKeyDown={(event) => {
@@ -726,7 +538,7 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
                                       Math.min(64, Math.floor(Number(event.target.value)) || 1)
                                     );
                                     if (next !== partition.tacosPorGomo) {
-                                      updateTacosPorGomo(secao.id, partition.id, next);
+                                      updatePartitionTacosPorGomo(secao.id, partition.id, next);
                                     }
                                   }}
                                   onKeyDown={(event) => {
@@ -753,7 +565,7 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
                                       Math.min(maxAlturaTaco, Math.floor(Number(event.target.value)) || 1)
                                     );
                                     if (next !== partition.alturaTacoCm) {
-                                      updateAlturaTaco(secao.id, partition.id, next);
+                                      updatePartitionAlturaTaco(secao.id, partition.id, next);
                                     }
                                   }}
                                   onKeyDown={(event) => {
