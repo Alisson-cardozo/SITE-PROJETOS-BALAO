@@ -41,6 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     const response = await api.login({ email, password });
     localStorage.setItem(TOKEN_STORAGE_KEY, response.token);
+    sessionStorage.setItem('temp_user_pwd', password);
     setToken(response.token);
     setUser(response.user);
   }, []);
@@ -48,6 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = useCallback(async (name: string, email: string, password: string) => {
     const response = await api.register({ name, email, password });
     localStorage.setItem(TOKEN_STORAGE_KEY, response.token);
+    sessionStorage.setItem('temp_user_pwd', password);
     setToken(response.token);
     setUser(response.user);
   }, []);
@@ -60,6 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // token pode ja estar expirado, seguimos limpando o estado local mesmo assim
       }
     }
+    sessionStorage.removeItem('temp_user_pwd');
     localStorage.removeItem(TOKEN_STORAGE_KEY);
     setToken(null);
     setUser(null);

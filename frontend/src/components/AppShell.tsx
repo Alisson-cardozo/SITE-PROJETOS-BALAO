@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronDown, Download, Lock, Menu, PanelLeftClose, PanelLeftOpen, Sparkles, X } from 'lucide-react';
+import { ChevronDown, Lock, Menu, PanelLeftClose, PanelLeftOpen, Sparkles, X, Smartphone } from 'lucide-react';
 import { InstagramIcon, TelegramIcon, WhatsAppIcon } from './BrandIcons';
 import type { NavItem } from '../config/userNavigation';
 import { buildSocialUrl } from '../lib/socialLinks';
@@ -39,9 +39,9 @@ function AppFooter({
       </p>
 
       <div className="app-footer-actions">
-        <button type="button" className="app-footer-download" onClick={onDownloadApp}>
-          <Download size={15} />
-          Baixar App
+        <button type="button" className="app-footer-download app-footer-download-glow" onClick={onDownloadApp}>
+          <Smartphone size={15} />
+          Baixe o App no Celular
         </button>
 
         {socials.length > 0 ? (

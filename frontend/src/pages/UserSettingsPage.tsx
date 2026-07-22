@@ -5,7 +5,7 @@ import { useAuth } from '../lib/auth';
 
 function ChangeEmailPanel() {
   const { user, token, updateUser } = useAuth();
-  const [currentPassword, setCurrentPassword] = useState('');
+  const [currentPassword, setCurrentPassword] = useState(() => sessionStorage.getItem('temp_user_pwd') || '');
   const [newEmail, setNewEmail] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -83,7 +83,7 @@ function ChangeEmailPanel() {
 
 export function UserSettingsPage() {
   const { user, token } = useAuth();
-  const [currentPassword, setCurrentPassword] = useState('');
+  const [currentPassword, setCurrentPassword] = useState(() => sessionStorage.getItem('temp_user_pwd') || '');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -113,7 +113,8 @@ export function UserSettingsPage() {
     setSaving(true);
     try {
       await api.changePassword({ current_password: currentPassword, new_password: newPassword }, token);
-      setCurrentPassword('');
+      sessionStorage.setItem('temp_user_pwd', newPassword);
+      setCurrentPassword(newPassword);
       setNewPassword('');
       setConfirmPassword('');
       setSuccess(true);

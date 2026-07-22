@@ -5441,3 +5441,31 @@ svg {
     box-shadow: 0 8px 20px rgba(231, 76, 60, 0.35);
   }
 }
+
+/* ===================== Glowing Footer PWA Button ===================== */
+.app-footer-download-glow {
+  background: linear-gradient(135deg, rgba(243, 156, 18, 0.15) 0%, rgba(231, 76, 60, 0.15) 100%) !important;
+  border: 1px solid rgba(243, 156, 18, 0.45) !important;
+  color: #fca5a5 !important;
+  box-shadow: 0 0 8px rgba(243, 156, 18, 0.2);
+  animation: footerCtaPulse 2s infinite alternate !important;
+}
+
+.app-footer-download-glow:hover {
+  transform: translateY(-2px) scale(1.03) !important;
+  background: linear-gradient(135deg, rgba(243, 156, 18, 0.25) 0%, rgba(231, 76, 60, 0.25) 100%) !important;
+  border-color: #f39c12 !important;
+  color: #fff !important;
+  box-shadow: 0 0 15px rgba(243, 156, 18, 0.45) !important;
+}
+
+@keyframes footerCtaPulse {
+  from {
+    border-color: rgba(243, 156, 18, 0.4);
+    box-shadow: 0 0 6px rgba(243, 156, 18, 0.15);
+  }
+  to {
+    border-color: rgba(231, 76, 60, 0.7);
+    box-shadow: 0 0 14px rgba(231, 76, 60, 0.4);
+  }
+}
