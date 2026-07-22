@@ -474,7 +474,10 @@ export function expandSectionPartitions(
   secao: MoldSection,
   config: SectionTacoConfig
 ): Array<MoldSection & { partition: SectionPartition; flatConfig: FlatTacoConfig }> {
-  const parts = config.partitions.length > 0 ? config.partitions : [createPartition()];
+  const parts = config.partitions;
+  if (parts.length === 0) {
+    return [];
+  }
   const n = parts.length;
   const weights = parts.map((p) => Math.max(0.01, Number(p.peso) || 1));
   const weightSum = weights.reduce((s, w) => s + w, 0);
