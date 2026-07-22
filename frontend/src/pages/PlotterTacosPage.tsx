@@ -32,6 +32,7 @@ interface PlotterTacosPageProps {
    * configuracao" cria um projeto NOVO (usado em "Plotar no Taco" da Galeria —
    * nunca reaproveita um projeto existente desse molde). */
   projectId?: number | null;
+  isBlank?: boolean;
   onBackToGallery?: () => void;
 }
 
@@ -64,7 +65,7 @@ function formatCm(value: number): string {
   return `${text} cm`;
 }
 
-export function PlotterTacosPage({ moldId, moldHint, projectId = null, onBackToGallery }: PlotterTacosPageProps) {
+export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank = false, onBackToGallery }: PlotterTacosPageProps) {
   const { token } = useAuth();
   const [mold, setMold] = useState<MoldDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -115,6 +116,14 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, onBackToG
           setSectionColors({ ...DEFAULT_COLORS, ...saved.section_colors });
           setTacoConfigs(saved.taco_configs);
           setSectionRatios(saved.section_ratios);
+        } else if (isBlank) {
+          setSectionColors(DEFAULT_COLORS);
+          setTacoConfigs({
+            boca: { partitions: [] },
+            bojo: { partitions: [] },
+            bico: { partitions: [] },
+          });
+          setSectionRatios({ ...DEFAULT_SECTION_RATIOS });
         } else {
           setSectionColors(DEFAULT_COLORS);
           setTacoConfigs(createDefaultTacoConfigs(moldResponse.data.bainha_cm || 1));
@@ -618,7 +627,12 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, onBackToG
                   </header>
 
                   <div className="plotter-partitions">
-                    {bandStats.map(({ band, divisions }, index) => {
+                    {partCount === 0 ? (
+                      <div className="plotter-partition-empty-state">
+                        <p>Nenhum taco nesta seção. Clique em "Adicionar repartição" abaixo para começar.</p>
+                      </div>
+                    ) : (
+                      bandStats.map(({ band, divisions }, index) => {
                       const partition = band.partition;
                       const label = partCount > 1 ? `${secao.nome} ${index + 1}` : secao.nome;
                       const maxAlturaTaco = Math.max(1, Math.floor(band.alturaCm));
@@ -794,7 +808,8 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, onBackToG
                           ) : null}
                         </div>
                       );
-                    })}
+                    })
+                  )}
                   </div>
 
                   <div className="plotter-partition-actions">

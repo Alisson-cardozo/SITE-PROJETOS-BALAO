@@ -31,6 +31,7 @@ interface PlotterTarget {
   projectId: number | null;
   nome: string;
   modelo: string;
+  isBlank?: boolean;
 }
 
 interface PlotterRiscadoTarget {
@@ -100,6 +101,7 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
   const [editingMoldId, setEditingMoldId] = useState<number | null>(null);
   const [plotterTarget, setPlotterTarget] = useState<PlotterTarget | null>(null);
   const [plotterRiscadoTarget, setPlotterRiscadoTarget] = useState<PlotterRiscadoTarget | null>(null);
+  const [plotTacoModalMold, setPlotTacoModalMold] = useState<MoldSummary | null>(null);
 
   if (!user) {
     return null;
@@ -133,8 +135,7 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
   /** "Plotar no Taco" na Galeria: sempre comeca do zero, sem projeto — salvar
    * cria um projeto NOVO, nunca reaproveita um ja existente desse molde. */
   function handlePlotTaco(mold: MoldSummary) {
-    setPlotterTarget({ moldId: mold.id, projectId: null, nome: mold.nome, modelo: mold.modelo });
-    setActiveId('plotter-tacos');
+    setPlotTacoModalMold(mold);
   }
 
   function handlePlotRiscado(mold: MoldSummary) {
@@ -172,6 +173,7 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
   const isLockedTab = locked && activeId !== 'solicitar-acesso' && activeId !== 'configuracoes';
 
   return (
+    <>
     <AppShell
       user={user}
       navGroups={navGroups}
@@ -242,6 +244,7 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
               : null
           }
           projectId={plotterTarget?.projectId ?? null}
+          isBlank={plotterTarget?.isBlank}
           onBackToGallery={() => {
             setPlotterTarget(null);
             setActiveId('moldes-galeria');
@@ -253,5 +256,78 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
         <SectionPlaceholder item={activeItem} />
       )}
     </AppShell>
+
+    {plotTacoModalMold && (
+      <div className="plot-choice-modal-overlay">
+        <div className="plot-choice-modal-card">
+          <div className="plot-choice-modal-header">
+            <h3>Configuração da Plotagem (Tacos)</h3>
+            <p>Escolha como deseja iniciar a plotagem para o molde <strong>{plotTacoModalMold.nome}</strong>.</p>
+          </div>
+
+          <div className="plot-choice-grid">
+            <button
+              type="button"
+              className="plot-choice-option-card standard"
+              onClick={() => {
+                setPlotterTarget({
+                  moldId: plotTacoModalMold.id,
+                  projectId: null,
+                  nome: plotTacoModalMold.nome,
+                  modelo: plotTacoModalMold.modelo,
+                  isBlank: false
+                });
+                setPlotTacoModalMold(null);
+                setActiveId('plotter-tacos');
+              }}
+            >
+              <div className="plot-choice-option-icon">📏</div>
+              <div className="plot-choice-option-content">
+                <h4>Preenchido com Tacos (Padrão)</h4>
+                <p>Inicia automaticamente com tacos de 5cm nas seguintes quantidades:</p>
+                <ul>
+                  <li>Boca: 4 tacos</li>
+                  <li>Bojo: 8 tacos</li>
+                  <li>Bico: 4 tacos</li>
+                </ul>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              className="plot-choice-option-card blank"
+              onClick={() => {
+                setPlotterTarget({
+                  moldId: plotTacoModalMold.id,
+                  projectId: null,
+                  nome: plotTacoModalMold.nome,
+                  modelo: plotTacoModalMold.modelo,
+                  isBlank: true
+                });
+                setPlotTacoModalMold(null);
+                setActiveId('plotter-tacos');
+              }}
+            >
+              <div className="plot-choice-option-icon">🔲</div>
+              <div className="plot-choice-option-content">
+                <h4>Molde em Branco</h4>
+                <p>Inicia sem nenhum taco. Você poderá adicionar e ajustar suas próprias repartições de tacos, definindo a quantidade e o tamanho de cada parte.</p>
+              </div>
+            </button>
+          </div>
+
+          <div className="plot-choice-modal-footer">
+            <button
+              type="button"
+              className="mold-import-button"
+              onClick={() => setPlotTacoModalMold(null)}
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
