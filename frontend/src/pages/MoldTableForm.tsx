@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
-import { FileUp, Loader2, Plus, Save, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import { MoldSilhouettePreview } from '../components/MoldSilhouettePreview';
-import { api, importMoldPdf, ApiError } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { jsPDF } from 'jspdf';
 
 const MODEL_OPTIONS = [
   'Modelado',
@@ -28,8 +29,29 @@ interface MoldPointRow {
 
 interface BaseMoldData {
   name?: string;
+  /** Perímetro (circunferência) em cada ponto do perfil. */
   perimeter: number[];
+  /** Altura real (inflado) acumulada em cada ponto. */
   heightAcum: number[];
+  /**
+   * Comprimento de cada passo no papel do molde (site: dist / getHeight()).
+   * LargoBase = soma(dist). NÃO usar diferenças de heightAcum.
+   */
+  dist?: number[];
+}
+
+interface MoldSpecs {
+  boca: number;
+  gajomax: number;
+  altoInflado: number;
+  anchoInflado: number;
+  volumen: number;
+  pontos: {
+    ponto: number;
+    dL: number;
+    accumL: number;
+    widthHalf: number;
+  }[];
 }
 
 const CATEGORY_RULES: [string, RegExp][] = [
@@ -84,12 +106,14 @@ export function MoldTableForm({ editMoldId = null, onSaved, onCancelEdit }: Mold
   const [bainhaCm, setBainhaCm] = useState('');
   const [points, setPoints] = useState<MoldPointRow[]>(() => [createPoint(), createPoint()]);
   const [bulkAddCount, setBulkAddCount] = useState('1');
+  const [activeFormTab, setActiveFormTab] = useState<'manual' | 'template'>('manual');
 
   // Base models states
   const [baseModelsData, setBaseModelsData] = useState<Record<string, BaseMoldData> | null>(null);
   const [selectedBaseModelKey, setSelectedBaseModelKey] = useState<string>('');
   const [balloonHeight, setBalloonHeight] = useState<string>('300');
   const [loadingBaseModels, setLoadingBaseModels] = useState(false);
+  const [calculatedSpecs, setCalculatedSpecs] = useState<MoldSpecs | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,9 +139,12 @@ export function MoldTableForm({ editMoldId = null, onSaved, onCancelEdit }: Mold
     };
   }, []);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [importing, setImporting] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
+  // Reset calculations when template inputs change
+  useEffect(() => {
+    setCalculatedSpecs(null);
+  }, [selectedBaseModelKey, balloonHeight, quantidadeGomos, bainhaCm, modelo]);
+
+
   const [loadingMold, setLoadingMold] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -139,7 +166,6 @@ export function MoldTableForm({ editMoldId = null, onSaved, onCancelEdit }: Mold
         setCanEditLoaded(true);
         setFormError(null);
         setFormSuccess(null);
-        setImportError(null);
       }
       return;
     }
@@ -148,7 +174,6 @@ export function MoldTableForm({ editMoldId = null, onSaved, onCancelEdit }: Mold
     setLoadingMold(true);
     setFormError(null);
     setFormSuccess(null);
-    setImportError(null);
     setCanEditLoaded(true);
 
     api
@@ -214,7 +239,13 @@ export function MoldTableForm({ editMoldId = null, onSaved, onCancelEdit }: Mold
     return groups;
   }, [baseModelsList]);
 
-  function handleGenerateFromBase() {
+  const handleCategoryChange = (newCategory: string) => {
+    setModelo(newCategory);
+    setSelectedBaseModelKey('');
+    setNomeMolde('');
+  };
+
+  function handleCalculateSpecs() {
     if (!baseModelsData || !selectedBaseModelKey) {
       setFormError('Selecione um modelo base primeiro.');
       return;
@@ -224,15 +255,15 @@ export function MoldTableForm({ editMoldId = null, onSaved, onCancelEdit }: Mold
     const bainha = Number(bainhaCm);
     const height = Number(balloonHeight);
 
-    if (!quantidadeGomos || !Number.isFinite(gomos) || gomos < 1) {
-      setFormError('Informe a quantidade de gomos antes de gerar.');
+    if (!quantidadeGomos || isNaN(gomos) || gomos < 1) {
+      setFormError('Informe a quantidade de gomos.');
       return;
     }
-    if (!bainhaCm || !Number.isFinite(bainha) || bainha < 0) {
-      setFormError('Informe o tamanho da bainha antes de gerar.');
+    if (!bainhaCm || isNaN(bainha) || bainha < 0) {
+      setFormError('Informe o tamanho da bainha.');
       return;
     }
-    if (!balloonHeight || !Number.isFinite(height) || height <= 0) {
+    if (!balloonHeight || isNaN(height) || height <= 0) {
       setFormError('Informe uma altura do balão válida maior que 0.');
       return;
     }
@@ -246,10 +277,24 @@ export function MoldTableForm({ editMoldId = null, onSaved, onCancelEdit }: Mold
     const perimeter = model.perimeter;
     const heightAcum = model.heightAcum;
 
-    // Calculate dist
-    const dist = [0];
-    for (let i = 1; i < heightAcum.length; i++) {
-      dist.push(heightAcum[i] - heightAcum[i - 1]);
+    // Igual ao site (calculos.js) e a Desktop/3d:
+    // - dist = comprimento de cada passo no papel do molde
+    // - LargoBase = soma(dist)  (= getHeight() no site)
+    // NÃO recalcular dist a partir de heightAcum: heightAcum é a altura
+    // real (inflado), menor que o comprimento do papel.
+    let dist: number[];
+    if (model.dist && model.dist.length === perimeter.length) {
+      dist = model.dist.slice();
+    } else {
+      dist = [0];
+      for (let i = 1; i < heightAcum.length; i++) {
+        dist.push(heightAcum[i] - heightAcum[i - 1]);
+      }
+    }
+
+    if (dist.length !== perimeter.length || heightAcum.length !== perimeter.length) {
+      setFormError('O modelo base tem arrays inconsistentes (dist/perimeter/heightAcum).');
+      return;
     }
 
     const LargoBase = dist.reduce((sum, val) => sum + val, 0);
@@ -258,26 +303,145 @@ export function MoldTableForm({ editMoldId = null, onSaved, onCancelEdit }: Mold
       return;
     }
 
-    // Generate new points
-    const newPoints = dist.map((_, i) => {
-      const dL = (dist[i] * height) / LargoBase;
-      const anchoAux = ((perimeter[i] * height / LargoBase) / (2 * gomos)) + (bainha / 2);
-      
-      // format to fixed-point strings
-      return createPoint(
-        dL.toFixed(1),
-        anchoAux.toFixed(1)
-      );
+    // Pontos da tabela (papel do molde escalado para a altura informada)
+    let sumHeight = 0;
+    const pontosEscalados = dist.map((step, i) => {
+      const dL = (step * height) / LargoBase;
+      sumHeight += dL;
+      const widthHalf = ((perimeter[i] * height) / LargoBase) / (2 * gomos) + bainha / 2;
+      return {
+        ponto: i + 1,
+        dL,
+        accumL: sumHeight,
+        widthHalf,
+      };
     });
+
+    const newPoints = pontosEscalados.map((p) =>
+      createPoint(p.dL.toFixed(1), p.widthHalf.toFixed(1))
+    );
 
     setPoints(newPoints);
     setFormError(null);
-    setFormSuccess('Tabela de pontos gerada com sucesso a partir do modelo base!');
 
-    // Automatically set the main model category
-    const detectedCategory = categorize(selectedBaseModelKey);
-    setModelo(normalizeModelo(detectedCategory));
+    // Ficha técnica — mesmas fórmulas do site / Desktop/3d/index.html Calcular()
+    const boca = (perimeter[0] * height) / LargoBase / Math.PI;
+    const maxWidth = Math.max(...perimeter);
+    const gajomax = (maxWidth * height) / LargoBase / gomos + bainha;
+    const altoInflado = (heightAcum[heightAcum.length - 1] * height) / LargoBase;
+    const anchoInflado = (maxWidth * height) / LargoBase / Math.PI;
+
+    let volumen = 0;
+    for (let i = 1; i < perimeter.length; i++) {
+      const r1 = (perimeter[i - 1] * height) / LargoBase / (2 * Math.PI);
+      const r2 = (perimeter[i] * height) / LargoBase / (2 * Math.PI);
+      const dh = ((heightAcum[i] - heightAcum[i - 1]) * height) / LargoBase;
+      volumen += (Math.PI / 3) * Math.abs(dh) * (r1 * r1 + r1 * r2 + r2 * r2);
+    }
+    volumen = volumen / 1_000_000; // cm³ → m³
+
+    setCalculatedSpecs({
+      boca,
+      gajomax,
+      altoInflado,
+      anchoInflado,
+      volumen,
+      pontos: pontosEscalados,
+    });
+
+    setFormSuccess('Medidas e escala calculadas com sucesso!');
   }
+
+  function handleDownloadPDF() {
+    if (!calculatedSpecs) return;
+    const doc = new jsPDF();
+    let y = 20;
+
+    // Header
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    doc.text(`Ficha Tecnica do Molde: ${nomeMolde}`, 14, y);
+    y += 10;
+
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Modelo / Categoria: ${modelo}`, 14, y);
+    doc.text(`Altura do Balao: ${balloonHeight} cm`, 100, y);
+    y += 6;
+    doc.text(`Quantidade de Gomos: ${quantidadeGomos}`, 14, y);
+    doc.text(`Tamanho da Bainha: ${bainhaCm} cm`, 100, y);
+    y += 10;
+
+    // Specs
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.text('Medidas Reais (Estimadas)', 14, y);
+    y += 6;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text(`Diametro da Boca: ${calculatedSpecs.boca.toFixed(1)} cm`, 14, y);
+    doc.text(`Largura Max. Gomo: ${calculatedSpecs.gajomax.toFixed(1)} cm`, 100, y);
+    y += 6;
+    doc.text(`Altura Cheio: ${calculatedSpecs.altoInflado.toFixed(1)} cm`, 14, y);
+    doc.text(`Largura Cheio: ${calculatedSpecs.anchoInflado.toFixed(1)} cm`, 100, y);
+    y += 6;
+    doc.text(`Volume Estimado: ${calculatedSpecs.volumen.toFixed(2)} m3`, 14, y);
+    y += 12;
+
+    // Table Header
+    doc.setFont('helvetica', 'bold');
+    doc.text('Ponto', 14, y);
+    doc.text('Comprimento (cm)', 40, y);
+    doc.text('Acumulado (cm)', 90, y);
+    doc.text('Largura/2 (cm)', 140, y);
+    doc.line(14, y + 2, 196, y + 2);
+    y += 8;
+
+    doc.setFont('helvetica', 'normal');
+    calculatedSpecs.pontos.forEach((p, idx) => {
+      if (y > 270) {
+        doc.addPage();
+        y = 20;
+        // Table Header again
+        doc.setFont('helvetica', 'bold');
+        doc.text('Ponto', 14, y);
+        doc.text('Comprimento (cm)', 40, y);
+        doc.text('Acumulado (cm)', 90, y);
+        doc.text('Largura/2 (cm)', 140, y);
+        doc.line(14, y + 2, 196, y + 2);
+        y += 8;
+        doc.setFont('helvetica', 'normal');
+      }
+
+      doc.text(String(p.ponto), 14, y);
+      doc.text(idx === 0 ? '-' : p.dL.toFixed(1), 40, y);
+      doc.text(p.accumL.toFixed(1), 90, y);
+      doc.text(p.widthHalf.toFixed(1), 140, y);
+      y += 6;
+    });
+
+    doc.save(`escala_${nomeMolde.toLowerCase().replace(/\s+/g, '_')}.pdf`);
+  }
+
+  function handleDownloadCSV() {
+    if (!calculatedSpecs) return;
+    let csv = '\ufeffPonto;Comprimento (cm);Comprimento Acumulado (cm);Largura/2 (cm)\n';
+    calculatedSpecs.pontos.forEach((p, idx) => {
+      csv += `${p.ponto};${idx === 0 ? 0 : p.dL.toFixed(2)};${p.accumL.toFixed(2)};${p.widthHalf.toFixed(2)}\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `escala_${nomeMolde.toLowerCase().replace(/\s+/g, '_')}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
 
   function addPoints(count: number) {
     const safeCount = Math.max(1, Math.min(500, Math.floor(count) || 1));
@@ -292,43 +456,7 @@ export function MoldTableForm({ editMoldId = null, onSaved, onCancelEdit }: Mold
     setPoints((prev) => prev.map((point) => (point.id === id ? { ...point, [field]: value } : point)));
   }
 
-  async function handlePdfSelected(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file || !token) {
-      return;
-    }
 
-    setImporting(true);
-    setImportError(null);
-    setFormSuccess(null);
-
-    try {
-      const imported = await importMoldPdf(file, token);
-
-      if (imported.nome_molde) {
-        setNomeMolde(imported.nome_molde);
-      }
-      if (imported.modelo) {
-        setModelo(normalizeModelo(imported.modelo));
-      }
-      if (imported.quantidade_gomos > 0) {
-        setQuantidadeGomos(String(imported.quantidade_gomos));
-      }
-      if (imported.bainha_cm > 0) {
-        setBainhaCm(String(imported.bainha_cm));
-      }
-      if (imported.pontos.length > 0) {
-        setPoints(
-          imported.pontos.map((point) => createPoint(String(point.altura_cm), String(point.largura_meia_cm)))
-        );
-      }
-    } catch (error) {
-      setImportError(error instanceof ApiError ? error.message : 'Nao foi possivel importar o PDF.');
-    } finally {
-      setImporting(false);
-    }
-  }
 
   async function handleSave(event: FormEvent) {
     event.preventDefault();
@@ -420,7 +548,7 @@ export function MoldTableForm({ editMoldId = null, onSaved, onCancelEdit }: Mold
                 Cancelar
               </button>
             ) : null}
-            <button type="submit" className="mold-save-button" disabled={saving || loadingMold || importing}>
+            <button type="submit" className="mold-save-button" disabled={saving || loadingMold}>
               {saving ? <Loader2 size={16} className="mold-import-spinner" /> : <Save size={16} />}
               {saving ? 'Salvando...' : isEditing ? 'Salvar alteracoes' : 'Salvar molde'}
             </button>
@@ -428,237 +556,427 @@ export function MoldTableForm({ editMoldId = null, onSaved, onCancelEdit }: Mold
         </div>
 
         {loadingMold && <p className="mold-form-loading">Carregando molde...</p>}
-        {importError && <p className="mold-import-error">{importError}</p>}
         {formError && <p className="mold-import-error">{formError}</p>}
         {formSuccess && <p className="mold-form-success">{formSuccess}</p>}
 
-        <div className="mold-form-grid">
-          <label className="auth-field">
-            <span>
-              Nome do Molde <em className="mold-required-mark">*</em>
-            </span>
-            <input
-              type="text"
-              required
-              placeholder="Obrigatório (ex: JZ10)"
-              value={nomeMolde}
-              onChange={(event) => setNomeMolde(event.target.value)}
-              disabled={loadingMold}
-            />
-          </label>
-
-          <label className="auth-field">
-            <span>Modelo</span>
-            <select value={modelo} onChange={(event) => setModelo(event.target.value)} disabled={loadingMold}>
-              {MODEL_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="auth-field">
-            <span>
-              Quantidade de Gomos <em className="mold-required-mark">*</em>
-            </span>
-            <input
-              type="number"
-              min={1}
-              required
-              placeholder="Obrigatório"
-              value={quantidadeGomos}
-              onChange={(event) => setQuantidadeGomos(event.target.value)}
-              disabled={loadingMold}
-            />
-          </label>
-
-          <label className="auth-field">
-            <span>
-              Tamanho da Bainha (cm) <em className="mold-required-mark">*</em>
-            </span>
-            <input
-              type="number"
-              min={0}
-              step="0.1"
-              required
-              placeholder="Obrigatório"
-              value={bainhaCm}
-              onChange={(event) => setBainhaCm(event.target.value)}
-              disabled={loadingMold}
-            />
-          </label>
+        {/* Abas do Formulário */}
+        <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #263349', marginBottom: '24px', paddingBottom: '1px' }}>
+          <button
+            type="button"
+            onClick={() => setActiveFormTab('manual')}
+            style={{
+              padding: '10px 16px',
+              background: activeFormTab === 'manual' ? 'rgba(38, 51, 73, 0.5)' : 'transparent',
+              border: 'none',
+              borderBottom: activeFormTab === 'manual' ? '2px solid #3b82f6' : '2px solid transparent',
+              color: activeFormTab === 'manual' ? '#f2f6fb' : '#8fa3bd',
+              fontWeight: '600',
+              cursor: 'pointer',
+              fontSize: '14px',
+              transition: 'all 0.2s',
+              borderTopLeftRadius: '6px',
+              borderTopRightRadius: '6px',
+            }}
+          >
+            ✍️ Digitar Pontos
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveFormTab('template')}
+            style={{
+              padding: '10px 16px',
+              background: activeFormTab === 'template' ? 'rgba(38, 51, 73, 0.5)' : 'transparent',
+              border: 'none',
+              borderBottom: activeFormTab === 'template' ? '2px solid #f59e0b' : '2px solid transparent',
+              color: activeFormTab === 'template' ? '#f2f6fb' : '#8fa3bd',
+              fontWeight: '600',
+              cursor: 'pointer',
+              fontSize: '14px',
+              transition: 'all 0.2s',
+              borderTopLeftRadius: '6px',
+              borderTopRightRadius: '6px',
+            }}
+          >
+            ⚡ Escala do Molde
+          </button>
         </div>
 
-        <div style={{
-          marginTop: '24px',
-          marginBottom: '24px',
-          padding: '20px',
-          border: '1px solid #263349',
-          borderRadius: '12px',
-          background: 'rgba(30, 41, 59, 0.4)'
-        }}>
-          <h3 style={{ fontSize: '15px', color: '#f59e0b', margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span>⚡</span> Gerar Molde de Modelo Pronto (data.json)
-          </h3>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', alignItems: 'end' }}>
-            <label className="auth-field" style={{ margin: 0 }}>
-              <span>Modelo Base</span>
-              {loadingBaseModels ? (
-                <div style={{ color: '#8fa3bd', fontSize: '13px', padding: '8px 0' }}>Carregando modelos...</div>
-              ) : (
-                <select 
-                  value={selectedBaseModelKey} 
-                  onChange={(e) => setSelectedBaseModelKey(e.target.value)}
-                  style={{ width: '100%' }}
-                >
-                  <option value="">-- Selecione um modelo --</option>
-                  {Object.keys(baseModelsByCategory).sort().map((cat) => (
-                    <optgroup key={cat} label={cat}>
-                      {baseModelsByCategory[cat].map((m) => (
-                        <option key={m.key} value={m.key}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </optgroup>
+        {activeFormTab === 'manual' ? (
+          <>
+            <div className="mold-form-grid">
+              <label className="auth-field">
+                <span>
+                  Nome do Molde <em className="mold-required-mark">*</em>
+                </span>
+                <input
+                  type="text"
+                  required
+                  placeholder="Obrigatório (ex: JZ10)"
+                  value={nomeMolde}
+                  onChange={(event) => setNomeMolde(event.target.value)}
+                  disabled={loadingMold}
+                />
+              </label>
+
+              <label className="auth-field">
+                <span>Modelo</span>
+                <select value={modelo} onChange={(event) => setModelo(event.target.value)} disabled={loadingMold}>
+                  {MODEL_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
                   ))}
                 </select>
-              )}
-            </label>
+              </label>
 
-            <label className="auth-field" style={{ margin: 0 }}>
-              <span>Altura do Balão (cm)</span>
-              <input
-                type="number"
-                min={10}
-                placeholder="Ex: 300"
-                value={balloonHeight}
-                onChange={(e) => setBalloonHeight(e.target.value)}
-              />
-            </label>
+              <label className="auth-field">
+                <span>
+                  Quantidade de Gomos <em className="mold-required-mark">*</em>
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  required
+                  placeholder="Obrigatório"
+                  value={quantidadeGomos}
+                  onChange={(event) => setQuantidadeGomos(event.target.value)}
+                  disabled={loadingMold}
+                />
+              </label>
 
-            <button
-              type="button"
-              onClick={handleGenerateFromBase}
-              style={{
-                height: '42px',
-                background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                color: '#fff',
-                border: 'none',
-                fontWeight: '600',
-                padding: '0 16px',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                transition: 'opacity 0.2s'
-              }}
-              onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'}
-              onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
-            >
-              Calcular e Gerar Pontos
-            </button>
-          </div>
-        </div>
-
-        <div className="mold-points-header">
-          <h3>Pontos do Molde</h3>
-          <div className="mold-points-actions">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="application/pdf"
-              className="mold-import-input"
-              onChange={handlePdfSelected}
-            />
-            <button
-              type="button"
-              className="mold-import-button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={importing || loadingMold}
-            >
-              {importing ? <Loader2 size={16} className="mold-import-spinner" /> : <FileUp size={16} />}
-              {importing ? 'Lendo PDF...' : 'Importar PDF'}
-            </button>
-            <div className="mold-add-point-group">
-              <input
-                type="number"
-                min={1}
-                max={500}
-                className="mold-add-point-count"
-                value={bulkAddCount}
-                onChange={(event) => setBulkAddCount(event.target.value)}
-                aria-label="Quantidade de pontos para adicionar"
-                disabled={loadingMold}
-              />
-              <button
-                type="button"
-                className="mold-add-point"
-                onClick={() => addPoints(Number(bulkAddCount))}
-                disabled={loadingMold}
-              >
-                <Plus size={16} />
-                Adicionar pontos
-              </button>
+              <label className="auth-field">
+                <span>
+                  Tamanho da Bainha (cm) <em className="mold-required-mark">*</em>
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.1"
+                  required
+                  placeholder="Obrigatório"
+                  value={bainhaCm}
+                  onChange={(event) => setBainhaCm(event.target.value)}
+                  disabled={loadingMold}
+                />
+              </label>
             </div>
-          </div>
-        </div>
 
-        <div className="mold-points-table-wrapper">
-          <table className="mold-points-table">
-            <thead>
-              <tr>
-                <th>Ponto</th>
-                <th>Altura (cm)</th>
-                <th>Largura/2 (cm)</th>
-                <th aria-label="Remover" />
-              </tr>
-            </thead>
-            <tbody>
-              {computedPoints.map((point) => (
-                <tr key={point.id}>
-                  <td data-label="Ponto">{point.ponto}</td>
-                  <td data-label="Altura (cm)">
-                    <input
-                      type="number"
-                      step="0.1"
-                      inputMode="decimal"
-                      value={point.alturaCm}
-                      onChange={(event) => updatePoint(point.id, 'alturaCm', event.target.value)}
-                      disabled={loadingMold}
-                    />
-                  </td>
-                  <td data-label="Largura/2 (cm)">
-                    <input
-                      type="number"
-                      step="0.1"
-                      inputMode="decimal"
-                      value={point.larguraMeiaCm}
-                      onChange={(event) => updatePoint(point.id, 'larguraMeiaCm', event.target.value)}
-                      disabled={loadingMold}
-                    />
-                  </td>
-                  <td data-label="Acoes" className="mold-points-actions-cell">
+            <div className="mold-points-header" style={{ marginTop: '24px' }}>
+              <h3>Pontos do Molde</h3>
+              <div className="mold-points-actions">
+                <div className="mold-add-point-group">
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    className="mold-add-point-count"
+                    value={bulkAddCount}
+                    onChange={(event) => setBulkAddCount(event.target.value)}
+                    aria-label="Quantidade de pontos para adicionar"
+                    disabled={loadingMold}
+                  />
+                  <button
+                    type="button"
+                    className="mold-add-point"
+                    onClick={() => addPoints(Number(bulkAddCount))}
+                    disabled={loadingMold}
+                  >
+                    <Plus size={16} />
+                    Adicionar pontos
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="mold-points-table-wrapper">
+              <table className="mold-points-table">
+                <thead>
+                  <tr>
+                    <th>Ponto</th>
+                    <th>Altura (cm)</th>
+                    <th>Largura/2 (cm)</th>
+                    <th aria-label="Remover" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {computedPoints.map((point) => (
+                    <tr key={point.id}>
+                      <td data-label="Ponto">{point.ponto}</td>
+                      <td data-label="Altura (cm)">
+                        <input
+                          type="number"
+                          step="0.1"
+                          inputMode="decimal"
+                          value={point.alturaCm}
+                          onChange={(event) => updatePoint(point.id, 'alturaCm', event.target.value)}
+                          disabled={loadingMold}
+                        />
+                      </td>
+                      <td data-label="Largura/2 (cm)">
+                        <input
+                          type="number"
+                          step="0.1"
+                          inputMode="decimal"
+                          value={point.larguraMeiaCm}
+                          onChange={(event) => updatePoint(point.id, 'larguraMeiaCm', event.target.value)}
+                          disabled={loadingMold}
+                        />
+                      </td>
+                      <td data-label="Acoes" className="mold-points-actions-cell">
+                        <button
+                          type="button"
+                          className="mold-remove-point"
+                          onClick={() => removePoint(point.id)}
+                          disabled={points.length <= 1 || loadingMold}
+                          aria-label="Remover ponto"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="mold-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+              <label className="auth-field">
+                <span>Modelo (Categoria)</span>
+                <select value={modelo} onChange={(e) => handleCategoryChange(e.target.value)} disabled={loadingMold}>
+                  {MODEL_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="auth-field">
+                <span>Nome do Molde <em className="mold-required-mark">*</em></span>
+                {loadingBaseModels ? (
+                  <div style={{ color: '#8fa3bd', fontSize: '13px', padding: '8px 0' }}>Carregando moldes...</div>
+                ) : (
+                  <select 
+                    value={selectedBaseModelKey} 
+                    onChange={(e) => {
+                      const key = e.target.value;
+                      setSelectedBaseModelKey(key);
+                      const found = baseModelsList.find(m => m.key === key);
+                      setNomeMolde(found ? found.name : '');
+                    }}
+                    disabled={loadingMold}
+                  >
+                    <option value="">-- Selecione o Molde --</option>
+                    {(baseModelsByCategory[modelo] || []).map((m) => (
+                      <option key={m.key} value={m.key}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </label>
+
+              <label className="auth-field">
+                <span>Altura do Balão (cm)</span>
+                <input
+                  type="number"
+                  min={10}
+                  placeholder="Ex: 300"
+                  value={balloonHeight}
+                  onChange={(e) => setBalloonHeight(e.target.value)}
+                  disabled={loadingMold}
+                />
+              </label>
+
+              <label className="auth-field">
+                <span>
+                  Quantidade de Gomos <em className="mold-required-mark">*</em>
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  required
+                  placeholder="Obrigatório"
+                  value={quantidadeGomos}
+                  onChange={(event) => setQuantidadeGomos(event.target.value)}
+                  disabled={loadingMold}
+                />
+              </label>
+
+              <label className="auth-field">
+                <span>
+                  Tamanho da Bainha (cm) <em className="mold-required-mark">*</em>
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.1"
+                  required
+                  placeholder="Obrigatório"
+                  value={bainhaCm}
+                  onChange={(event) => setBainhaCm(event.target.value)}
+                  disabled={loadingMold}
+                />
+              </label>
+            </div>
+
+            <div style={{ marginTop: '24px' }}>
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '24px' }}>
+                <button
+                  type="button"
+                  onClick={handleCalculateSpecs}
+                  style={{
+                    height: '42px',
+                    background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                    color: '#fff',
+                    border: 'none',
+                    fontWeight: '600',
+                    padding: '0 20px',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    transition: 'opacity 0.2s'
+                  }}
+                  onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'}
+                  onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
+                >
+                  📊 Calcular e Mostrar Escala
+                </button>
+
+                {calculatedSpecs && (
+                  <>
                     <button
                       type="button"
-                      className="mold-remove-point"
-                      onClick={() => removePoint(point.id)}
-                      disabled={points.length <= 1 || loadingMold}
-                      aria-label="Remover ponto"
+                      onClick={handleDownloadPDF}
+                      style={{
+                        height: '42px',
+                        background: 'linear-gradient(135deg, #10b981, #059669)',
+                        color: '#fff',
+                        border: 'none',
+                        fontWeight: '600',
+                        padding: '0 20px',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        transition: 'opacity 0.2s'
+                      }}
+                      onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'}
+                      onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
                     >
-                      <Trash2 size={15} />
+                      📄 Baixar PDF
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
 
-        <div className="mold-form-footer">
-          <button type="submit" className="mold-save-button" disabled={saving || loadingMold || importing}>
+                    <button
+                      type="button"
+                      onClick={handleDownloadCSV}
+                      style={{
+                        height: '42px',
+                        background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                        color: '#fff',
+                        border: 'none',
+                        fontWeight: '600',
+                        padding: '0 20px',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        transition: 'opacity 0.2s'
+                      }}
+                      onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'}
+                      onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
+                    >
+                      📊 Baixar CSV
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {calculatedSpecs && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '24px', marginTop: '24px' }}>
+                  {/* Ficha Técnica Card */}
+                  <div style={{
+                    padding: '20px',
+                    borderRadius: '12px',
+                    background: 'rgba(30, 41, 59, 0.4)',
+                    border: '1px solid #263349',
+                    height: 'fit-content'
+                  }}>
+                    <h3 style={{ fontSize: '15px', color: '#3b82f6', margin: '0 0 16px 0', borderBottom: '1px solid #263349', paddingBottom: '8px' }}>
+                      📐 Ficha Técnica (Medidas Reais)
+                    </h3>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '14px', color: '#c3d1e6' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#8fa3bd' }}>Diâmetro da Boca:</span>
+                        <strong style={{ color: '#f2f6fb' }}>{calculatedSpecs.boca.toFixed(1)} cm</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#8fa3bd' }}>Largura Máx. Gomo:</span>
+                        <strong style={{ color: '#f2f6fb' }}>{calculatedSpecs.gajomax.toFixed(1)} cm</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#8fa3bd' }}>Altura Cheio:</span>
+                        <strong style={{ color: '#f2f6fb' }}>{calculatedSpecs.altoInflado.toFixed(1)} cm</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#8fa3bd' }}>Largura Cheio:</span>
+                        <strong style={{ color: '#f2f6fb' }}>{calculatedSpecs.anchoInflado.toFixed(1)} cm</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#8fa3bd' }}>Volume Estimado:</span>
+                        <strong style={{ color: '#10b981' }}>{calculatedSpecs.volumen.toFixed(2)} m³</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tabela de Pontos Gerada */}
+                  <div style={{
+                    padding: '20px',
+                    borderRadius: '12px',
+                    background: 'rgba(30, 41, 59, 0.4)',
+                    border: '1px solid #263349',
+                    height: 'fit-content'
+                  }}>
+                    <h3 style={{ fontSize: '15px', color: '#10b981', margin: '0 0 16px 0', borderBottom: '1px solid #263349', paddingBottom: '8px' }}>
+                      📋 Tabela de Pontos Calculada
+                    </h3>
+                    <div style={{ maxHeight: '300px', overflowY: 'auto', borderRadius: '8px', border: '1px solid #263349' }}>
+                      <table className="mold-points-table" style={{ margin: 0, width: '100%' }}>
+                        <thead style={{ position: 'sticky', top: 0, background: '#131c2d', zIndex: 1 }}>
+                          <tr>
+                            <th>Ponto</th>
+                            <th>Comprimento (cm)</th>
+                            <th>Acumulado (cm)</th>
+                            <th>Largura/2 (cm)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {calculatedSpecs.pontos.map((p, idx) => (
+                            <tr key={p.ponto}>
+                              <td data-label="Ponto">{p.ponto}</td>
+                              <td data-label="Comprimento (cm)">{idx === 0 ? '-' : p.dL.toFixed(1)}</td>
+                              <td data-label="Acumulado (cm)">{p.accumL.toFixed(1)}</td>
+                              <td data-label="Largura/2 (cm)">{p.widthHalf.toFixed(1)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        <div className="mold-form-footer" style={{ marginTop: '32px' }}>
+          <button type="submit" className="mold-save-button" disabled={saving || loadingMold}>
             {saving ? <Loader2 size={16} className="mold-import-spinner" /> : <Save size={16} />}
             {saving ? 'Salvando...' : isEditing ? 'Salvar alteracoes' : 'Salvar molde'}
           </button>
