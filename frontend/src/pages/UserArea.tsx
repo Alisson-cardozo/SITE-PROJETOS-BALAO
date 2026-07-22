@@ -73,27 +73,28 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
   // "Abas" ficam de fora dessa lista (sao um grupo de nav a parte, sempre
   // visivel), entao o admin nunca perde acesso a tela que desfaz o ocultar.
   const visibleMainNavItems = useMemo(
-    () => (locked ? [] : mainNavItems.filter((item) => !hiddenIds.has(item.id))),
-    [hiddenIds, locked]
+    () => mainNavItems.filter((item) => !hiddenIds.has(item.id)),
+    [hiddenIds]
   );
   const visibleAccountNavItems = useMemo(
-    () =>
-      locked
-        ? accountNavItems.filter((item) => item.id === 'configuracoes')
-        : accountNavItems.filter((item) => !hiddenIds.has(item.id)),
-    [hiddenIds, locked]
+    () => accountNavItems.filter((item) => !hiddenIds.has(item.id)),
+    [hiddenIds]
   );
 
   const navGroups = useMemo(
-    () => (locked ? [[solicitarAcessoNavItem], visibleAccountNavItems] : [visibleMainNavItems, visibleAccountNavItems, ...extraNavGroups]),
+    () => {
+      if (locked) {
+        return [[solicitarAcessoNavItem], visibleMainNavItems, visibleAccountNavItems];
+      }
+      return [visibleMainNavItems, visibleAccountNavItems, ...extraNavGroups];
+    },
     [locked, visibleMainNavItems, visibleAccountNavItems, extraNavGroups]
   );
   const selectableItems = useMemo(() => navGroups.flatMap((group) => flattenNavItems(group)), [navGroups]);
 
   /** Uma aba escondida some do menu E de qualquer atalho que pule direto pra
-   * ela (ex: "Plotar Risco" na galeria) — vale pra todo mundo, admin incluso.
-   * Independente do bloqueio por falta de pagamento (ver `locked` acima). */
-  const canUse = (id: string) => !isNavItemHidden(id, hiddenIds) && (!locked || id === 'solicitar-acesso' || id === 'configuracoes');
+   * ela (ex: "Plotar Risco" na galeria) — vale pra todo mundo, admin incluso. */
+  const canUse = (id: string) => !isNavItemHidden(id, hiddenIds);
 
   const [activeId, setActiveId] = useState(selectableItems[0].id);
   const [editingMoldId, setEditingMoldId] = useState<number | null>(null);
@@ -168,6 +169,7 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
   // (chegou ali por algum atalho que a gente deixou passar), mostra o
   // placeholder generico em vez do conteudo de verdade.
   const blocked = !canUse(activeId);
+  const isLockedTab = locked && activeId !== 'solicitar-acesso' && activeId !== 'configuracoes';
 
   return (
     <AppShell
@@ -180,6 +182,8 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
     >
       {blocked ? (
         <SectionPlaceholder item={activeItem} note="Essa area nao esta disponivel no momento." />
+      ) : isLockedTab ? (
+        <SolicitarAcessoPage lockedTabLabel={activeItem.label} />
       ) : activeId === 'solicitar-acesso' ? (
         <SolicitarAcessoPage />
       ) : activeId === 'moldes-galeria' ? (

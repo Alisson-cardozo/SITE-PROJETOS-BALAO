@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronDown, Download, Menu, PanelLeftClose, PanelLeftOpen, Sparkles, X } from 'lucide-react';
+import { ChevronDown, Download, Lock, Menu, PanelLeftClose, PanelLeftOpen, Sparkles, X } from 'lucide-react';
 import { InstagramIcon, TelegramIcon, WhatsAppIcon } from './BrandIcons';
 import type { NavItem } from '../config/userNavigation';
 import { buildSocialUrl } from '../lib/socialLinks';
 import type { SystemSettings, User } from '../types';
+import { hasPaidAccess } from '../lib/access';
 
 const COLLAPSE_STORAGE_KEY = 'sidebar_collapsed';
 
@@ -34,7 +35,7 @@ function AppFooter({
     <footer className="app-footer">
       <p className="app-footer-text">
         <Sparkles size={15} className="app-footer-sparkle" />
-        Tenha um sistema proprio! <span className="app-footer-cta">Entre em contato</span>
+        Tenha um sistema próprio! <span className="app-footer-cta">Entre em contato</span>
       </p>
 
       <div className="app-footer-actions">
@@ -90,12 +91,10 @@ export function AppShell({ user, navGroups, activeId, onSelect, onLogout, social
   function handleSelect(id: string) {
     onSelect(id);
     setSidebarOpen(false);
-    // fecha flyout do menu minimizado apos escolher
     setOpenIds(new Set());
   }
 
   function toggleGroup(id: string) {
-    // Mantem o menu minimizado e so abre/fecha o subgrupo (flyout).
     setOpenIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
@@ -107,6 +106,16 @@ export function AppShell({ user, navGroups, activeId, onSelect, onLogout, social
       return next;
     });
   }
+
+  const isUserLocked = !hasPaidAccess(user);
+
+  const isItemLocked = (id: string) => {
+    if (!isUserLocked) return false;
+    if (id === 'solicitar-acesso' || id === 'configuracoes' || id === 'baixar-app') {
+      return false;
+    }
+    return true;
+  };
 
   return (
     <div className="app-shell">
@@ -121,9 +130,9 @@ export function AppShell({ user, navGroups, activeId, onSelect, onLogout, social
             {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
           <div>
-            <h1>Ola, {user.name}</h1>
+            <h1>Olá, {user.name}</h1>
             <span className={`role-badge role-${user.role}`}>
-              {user.role === 'admin' ? 'Administrador' : 'Usuario'}
+              {user.role === 'admin' ? 'Administrador' : 'Usuário'}
             </span>
           </div>
         </div>
@@ -157,6 +166,7 @@ export function AppShell({ user, navGroups, activeId, onSelect, onLogout, social
                       >
                         <Icon size={18} />
                         <span>{item.label}</span>
+                        {isItemLocked(item.id) && <Lock size={12} className="app-nav-lock-icon" />}
                         <ChevronDown size={16} className={`app-nav-chevron ${isOpen ? 'open' : ''}`} />
                       </button>
 
@@ -169,7 +179,8 @@ export function AppShell({ user, navGroups, activeId, onSelect, onLogout, social
                               className={`app-nav-subitem ${child.id === activeId ? 'active' : ''}`}
                               onClick={() => handleSelect(child.id)}
                             >
-                              {child.label}
+                              <span>{child.label}</span>
+                              {isItemLocked(child.id) && <Lock size={11} className="app-nav-lock-icon" />}
                             </button>
                           ))}
                         </div>
@@ -190,6 +201,7 @@ export function AppShell({ user, navGroups, activeId, onSelect, onLogout, social
                   >
                     <Icon size={18} />
                     <span>{item.label}</span>
+                    {isItemLocked(item.id) && <Lock size={12} className="app-nav-lock-icon" />}
                   </button>
                 );
               })}

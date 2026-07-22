@@ -10,7 +10,11 @@ function formatMoeda(valor: number): string {
   return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
-export function SolicitarAcessoPage() {
+interface SolicitarAcessoPageProps {
+  lockedTabLabel?: string;
+}
+
+export function SolicitarAcessoPage({ lockedTabLabel }: SolicitarAcessoPageProps) {
   const { token, updateUser } = useAuth();
   const [planos, setPlanos] = useState<PlanoPublic[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,7 +33,7 @@ export function SolicitarAcessoPage() {
       const response = await api.listPlanos(token);
       setPlanos(response.data);
     } catch (err) {
-      setLoadError(err instanceof ApiError ? err.message : 'Nao foi possivel carregar os planos.');
+      setLoadError(err instanceof ApiError ? err.message : 'Não foi possível carregar os planos.');
     } finally {
       setLoading(false);
     }
@@ -47,7 +51,7 @@ export function SolicitarAcessoPage() {
       const response = await api.createPagamento(plano.id, token);
       setPagamento(response.data);
     } catch (err) {
-      setCreateError(err instanceof ApiError ? err.message : 'Nao foi possivel gerar o Pix. Tente novamente.');
+      setCreateError(err instanceof ApiError ? err.message : 'Não foi possível gerar o Pix. Tente novamente.');
     } finally {
       setCreatingPlanoId(null);
     }
@@ -85,16 +89,28 @@ export function SolicitarAcessoPage() {
   return (
     <div className="bandeira-workspace">
       <div className="bandeira-main-panel">
-        <div className="bandeira-panel-header">
-          <h2>Solicitar Acesso</h2>
-          <p>Escolha um plano e pague via Pix pra liberar o acesso ao sistema.</p>
-        </div>
+        {lockedTabLabel ? (
+          <div className="solicitar-acesso-alert-box">
+            <div className="solicitar-acesso-alert-lock-icon">🔒</div>
+            <div className="solicitar-acesso-alert-text">
+              <h3>Área Bloqueada</h3>
+              <p>
+                A aba <strong>{lockedTabLabel}</strong> faz parte do plano pago. Ative um plano abaixo para liberar o acesso a todas as ferramentas do sistema!
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="bandeira-panel-header">
+            <h2>Solicitar Acesso</h2>
+            <p>Escolha um plano e pague via Pix pra liberar o acesso ao sistema.</p>
+          </div>
+        )}
 
         {pagamento?.status === 'aprovado' ? (
           <div className="bandeira-create-panel solicitar-acesso-status">
             <Check size={32} className="solicitar-acesso-status-icon ok" />
             <h3>Pagamento confirmado!</h3>
-            <p className="bandeira-size-hint">Seu acesso foi liberado. Va em qualquer aba do menu pra comecar a usar.</p>
+            <p className="bandeira-size-hint">Seu acesso foi liberado. Vá em qualquer aba do menu pra começar a usar.</p>
           </div>
         ) : pagamento?.status === 'pendente' ? (
           <div className="bandeira-create-panel solicitar-acesso-status">
@@ -119,11 +135,11 @@ export function SolicitarAcessoPage() {
                 }}
               >
                 {pixCopied ? <Check size={16} /> : <Copy size={16} />}
-                {pixCopied ? 'Copiado' : 'Copiar codigo Pix (copia e cola)'}
+                {pixCopied ? 'Copiado' : 'Copiar código Pix (copia e cola)'}
               </button>
             ) : null}
             <p className="bandeira-size-hint">
-              <Loader2 size={14} className="mold-import-spinner" /> Aguardando confirmacao do pagamento...
+              <Loader2 size={14} className="mold-import-spinner" /> Aguardando confirmação do pagamento...
             </p>
             <button type="button" className="mold-secondary-button rifa-recusar-button" onClick={handleTentarNovamente}>
               Cancelar e escolher outro plano
@@ -131,7 +147,7 @@ export function SolicitarAcessoPage() {
           </div>
         ) : pagamento?.status === 'rejeitado' ? (
           <div className="bandeira-create-panel solicitar-acesso-status">
-            <p className="mold-import-error">O pagamento nao foi aprovado.</p>
+            <p className="mold-import-error">O pagamento não foi aprovado.</p>
             <button type="button" className="mold-save-button" onClick={handleTentarNovamente}>
               Tentar novamente
             </button>
@@ -143,7 +159,7 @@ export function SolicitarAcessoPage() {
         ) : loadError ? (
           <p className="mold-import-error">{loadError}</p>
         ) : planos.length === 0 ? (
-          <p className="bandeira-size-hint">Nenhum plano disponivel no momento. Fale com o administrador.</p>
+          <p className="bandeira-size-hint">Nenhum plano disponível no momento. Fale com o administrador.</p>
         ) : (
           <>
             {createError ? <p className="mold-import-error">{createError}</p> : null}
