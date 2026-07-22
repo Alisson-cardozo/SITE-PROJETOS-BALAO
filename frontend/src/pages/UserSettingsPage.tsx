@@ -3,6 +3,84 @@ import { Loader2 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 
+function ChangeEmailPanel() {
+  const { user, token, updateUser } = useAuth();
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (!token) return;
+    setFieldErrors({});
+    setFormError(null);
+    setSuccess(false);
+
+    if (currentPassword.trim() === '') {
+      setFieldErrors({ current_password: 'Informe sua senha atual.' });
+      return;
+    }
+    if (newEmail.trim() === '') {
+      setFieldErrors({ new_email: 'Informe o novo e-mail.' });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const response = await api.changeEmail({ current_password: currentPassword, new_email: newEmail.trim() }, token);
+      updateUser({ email: response.user.email });
+      setCurrentPassword('');
+      setNewEmail('');
+      setSuccess(true);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.errors) setFieldErrors(err.errors);
+        setFormError(err.message);
+      } else {
+        setFormError('Nao foi possivel trocar o e-mail.');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="bandeira-create-panel">
+      <h4>Trocar e-mail</h4>
+      <p className="bandeira-size-hint">
+        E-mail atual: <strong>{user?.email}</strong>
+      </p>
+
+      <label className="auth-field">
+        <span>Novo e-mail</span>
+        <input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} autoComplete="email" />
+        {fieldErrors.new_email && <small className="auth-error">{fieldErrors.new_email}</small>}
+      </label>
+
+      <label className="auth-field">
+        <span>Senha atual</span>
+        <input
+          type="password"
+          value={currentPassword}
+          onChange={(e) => setCurrentPassword(e.target.value)}
+          autoComplete="current-password"
+        />
+        {fieldErrors.current_password && <small className="auth-error">{fieldErrors.current_password}</small>}
+      </label>
+
+      {formError ? <p className="mold-import-error">{formError}</p> : null}
+      {success ? <p className="mold-form-success">E-mail atualizado com sucesso.</p> : null}
+
+      <button type="button" className="mold-save-button" onClick={() => void handleSave()} disabled={saving}>
+        {saving ? <Loader2 size={16} className="mold-import-spinner" /> : null}
+        Salvar novo e-mail
+      </button>
+    </div>
+  );
+}
+
 export function UserSettingsPage() {
   const { user, token } = useAuth();
   const [currentPassword, setCurrentPassword] = useState('');
@@ -56,7 +134,7 @@ export function UserSettingsPage() {
       <div className="bandeira-main-panel">
         <div className="bandeira-panel-header">
           <h2>Configuracoes do Usuario</h2>
-          <p>Dados da conta e troca de senha.</p>
+          <p>Dados da conta, troca de senha{user?.role === 'admin' ? ' e e-mail' : ''}.</p>
         </div>
 
         <div className="bandeira-create-panel">
@@ -65,6 +143,8 @@ export function UserSettingsPage() {
             Nome: <strong>{user?.name}</strong> — Email: <strong>{user?.email}</strong>
           </p>
         </div>
+
+        {user?.role === 'admin' ? <ChangeEmailPanel /> : null}
 
         <div className="bandeira-create-panel">
           <h4>Trocar senha</h4>

@@ -1,7 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronDown, Menu, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
+import { ChevronDown, Download, Menu, PanelLeftClose, PanelLeftOpen, Sparkles, X } from 'lucide-react';
+import { InstagramIcon, TelegramIcon, WhatsAppIcon } from './BrandIcons';
 import type { NavItem } from '../config/userNavigation';
-import type { User } from '../types';
+import { buildSocialUrl } from '../lib/socialLinks';
+import type { SystemSettings, User } from '../types';
 
 const COLLAPSE_STORAGE_KEY = 'sidebar_collapsed';
 
@@ -11,7 +13,55 @@ interface AppShellProps {
   activeId: string;
   onSelect: (id: string) => void;
   onLogout: () => void;
+  socialLinks?: SystemSettings | null;
   children: ReactNode;
+}
+
+function AppFooter({
+  socialLinks,
+  onDownloadApp,
+}: {
+  socialLinks?: SystemSettings | null;
+  onDownloadApp: () => void;
+}) {
+  const socials = [
+    { platform: 'telegram' as const, value: socialLinks?.telegram, Icon: TelegramIcon },
+    { platform: 'instagram' as const, value: socialLinks?.instagram, Icon: InstagramIcon },
+    { platform: 'whatsapp' as const, value: socialLinks?.whatsapp, Icon: WhatsAppIcon },
+  ].filter((s) => s.value);
+
+  return (
+    <footer className="app-footer">
+      <p className="app-footer-text">
+        <Sparkles size={15} className="app-footer-sparkle" />
+        Tenha um sistema proprio! <span className="app-footer-cta">Entre em contato</span>
+      </p>
+
+      <div className="app-footer-actions">
+        <button type="button" className="app-footer-download" onClick={onDownloadApp}>
+          <Download size={15} />
+          Baixar App
+        </button>
+
+        {socials.length > 0 ? (
+          <div className="app-footer-socials">
+            {socials.map(({ platform, value, Icon }) => (
+              <a
+                key={platform}
+                className={`app-footer-social-link ${platform}`}
+                href={buildSocialUrl(platform, value!)}
+                target="_blank"
+                rel="noreferrer"
+                title={platform === 'telegram' ? 'Telegram' : platform === 'instagram' ? 'Instagram' : 'WhatsApp'}
+              >
+                <Icon size={17} />
+              </a>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </footer>
+  );
 }
 
 function findOpenParentId(navGroups: NavItem[][], activeId: string): string | null {
@@ -25,7 +75,7 @@ function findOpenParentId(navGroups: NavItem[][], activeId: string): string | nu
   return null;
 }
 
-export function AppShell({ user, navGroups, activeId, onSelect, onLogout, children }: AppShellProps) {
+export function AppShell({ user, navGroups, activeId, onSelect, onLogout, socialLinks, children }: AppShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(COLLAPSE_STORAGE_KEY) === '1');
   const [openIds, setOpenIds] = useState<Set<string>>(() => {
@@ -160,6 +210,8 @@ export function AppShell({ user, navGroups, activeId, onSelect, onLogout, childr
 
         <main className="app-content">{children}</main>
       </div>
+
+      <AppFooter socialLinks={socialLinks} onDownloadApp={() => handleSelect('baixar-app')} />
     </div>
   );
 }

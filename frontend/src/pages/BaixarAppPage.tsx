@@ -40,7 +40,7 @@ export function BaixarAppPage() {
 
         <div className="bandeira-create-panel pwa-install-panel">
           <div className="pwa-install-hero">
-            <img src="/pwa-192.png" alt="Alisson Projetos" className="pwa-install-icon" />
+            <img src="/pwa-192-v3.png" alt="Alisson Projetos" className="pwa-install-icon" />
             <div>
               <h3>Alisson Projetos</h3>
               <p className="bandeira-size-hint">Acesso rapido, tela cheia e o icone na sua tela inicial.</p>

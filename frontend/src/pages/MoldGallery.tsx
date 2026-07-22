@@ -15,6 +15,11 @@ interface MoldGalleryProps {
   /** "Plotar Risco" abre o molde no Plotter Riscado (risco dos gomos do balao,
    * com ou sem repeticao de desenho). */
   onPlotRiscado: (mold: MoldSummary) => void;
+  /** Some com o atalho quando o admin esconde a aba correspondente — sem isso
+   * o botao continuaria funcionando mesmo com "Plotter (Moldes Tacos)"/"Plotter
+   * (Molde Riscado)" escondidos do menu. Default true (nunca escondido). */
+  showPlotTaco?: boolean;
+  showPlotRiscado?: boolean;
 }
 
 function formatCm(value: number): string {
@@ -46,7 +51,14 @@ function toPreviewPoints(pontos: MoldPoint[] | undefined) {
   });
 }
 
-export function MoldGallery({ onEdit, onCopied, onPlotTaco, onPlotRiscado }: MoldGalleryProps) {
+export function MoldGallery({
+  onEdit,
+  onCopied,
+  onPlotTaco,
+  onPlotRiscado,
+  showPlotTaco = true,
+  showPlotRiscado = true,
+}: MoldGalleryProps) {
   const { token } = useAuth();
   const [molds, setMolds] = useState<MoldSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -156,25 +168,29 @@ export function MoldGallery({ onEdit, onCopied, onPlotTaco, onPlotRiscado }: Mol
                   <span className="mold-card-model">{mold.modelo}</span>
                 </div>
                 <div className="mold-card-actions">
-                  <button
-                    type="button"
-                    className="mold-card-btn plot"
-                    onClick={() => onPlotTaco(mold)}
-                    title="Plotar este molde em tacos"
-                  >
-                    <Printer size={15} />
-                    Plotar no Taco
-                  </button>
+                  {showPlotTaco ? (
+                    <button
+                      type="button"
+                      className="mold-card-btn plot"
+                      onClick={() => onPlotTaco(mold)}
+                      title="Plotar este molde em tacos"
+                    >
+                      <Printer size={15} />
+                      Plotar no Taco
+                    </button>
+                  ) : null}
 
-                  <button
-                    type="button"
-                    className="mold-card-btn plot"
-                    onClick={() => onPlotRiscado(mold)}
-                    title="Plotar o risco dos gomos deste molde"
-                  >
-                    <PenTool size={15} />
-                    Plotar Risco
-                  </button>
+                  {showPlotRiscado ? (
+                    <button
+                      type="button"
+                      className="mold-card-btn plot"
+                      onClick={() => onPlotRiscado(mold)}
+                      title="Plotar o risco dos gomos deste molde"
+                    >
+                      <PenTool size={15} />
+                      Plotar Risco
+                    </button>
+                  ) : null}
 
                   {mold.can_edit ? (
                     <button

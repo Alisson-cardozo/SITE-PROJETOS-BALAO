@@ -1,16 +1,20 @@
 import {
   Box,
-  Download,
+  EyeOff,
   FilePlus2,
   Flag,
   FolderKanban,
+  KeyRound,
   LayoutGrid,
   MonitorSmartphone,
   PenTool,
   Printer,
   Settings,
   Shapes,
+  Share2,
   Ticket,
+  Users,
+  Wallet,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -108,14 +112,68 @@ export const accountNavItems: NavItem[] = [
     icon: Settings,
     description: 'Dados da conta e troca de senha.',
   },
+];
+
+export const adminNavItems: NavItem[] = [
   {
-    id: 'baixar-app',
-    label: 'Baixar App',
-    icon: Download,
-    description: 'Instale o sistema como app no computador ou celular.',
+    id: 'admin-usuarios',
+    label: 'Usuarios',
+    icon: Users,
+    description: 'Todos os usuarios cadastrados no sistema.',
+  },
+  {
+    id: 'admin-redes-sociais',
+    label: 'Redes Sociais',
+    icon: Share2,
+    description: 'Telegram, Instagram e WhatsApp mostrados no rodape do sistema.',
+  },
+  {
+    id: 'admin-abas',
+    label: 'Abas',
+    icon: EyeOff,
+    description: 'Escolha quais abas do menu ficam visiveis pros usuarios.',
+  },
+  {
+    id: 'admin-plano',
+    label: 'Plano',
+    icon: Wallet,
+    description: 'Credenciais do Mercado Pago e os planos pagos (valor e dias de acesso).',
   },
 ];
 
+/** So aparece pra quem nao tem plano pago ativo (ver hasPaidAccess em
+ * lib/access.ts) — nao faz parte de mainNavItems/accountNavItems porque nao
+ * e um item "escondivel" pelo admin, e sim condicional ao status de
+ * pagamento de cada usuario. */
+export const solicitarAcessoNavItem: NavItem = {
+  id: 'solicitar-acesso',
+  label: 'Solicitar Acesso',
+  icon: KeyRound,
+  description: 'Escolha um plano e pague pra liberar o acesso ao sistema.',
+};
+
+/** Itens de nivel superior que podem ser escondidos dos usuarios comuns pelo
+ * admin — mesma granularidade do menu (esconder um grupo esconde os filhos
+ * dele junto). Nunca inclui os itens exclusivos do admin. */
+export const hideableNavItems: NavItem[] = [...mainNavItems, ...accountNavItems];
+
 export function flattenNavItems(items: NavItem[]): NavItem[] {
   return items.flatMap((item) => (item.children && item.children.length > 0 ? item.children : [item]));
+}
+
+/**
+ * Um id conta como escondido se ele mesmo estiver na lista, OU se for filho
+ * de um grupo escondido (esconder "Moldes" esconde "Galeria de Moldes" e
+ * "Adicionar sua Tabela de Molde" junto). Usado tanto pra montar o menu
+ * quanto pra tirar atalhos escondidos de outros lugares do sistema (ex: o
+ * botao "Plotar Risco" na galeria, que pula direto pro Plotter Riscado sem
+ * passar pelo menu).
+ */
+export function isNavItemHidden(id: string, hiddenTopLevelIds: ReadonlySet<string>): boolean {
+  if (hiddenTopLevelIds.has(id)) {
+    return true;
+  }
+  return hideableNavItems.some(
+    (item) => hiddenTopLevelIds.has(item.id) && (item.children ?? []).some((child) => child.id === id)
+  );
 }

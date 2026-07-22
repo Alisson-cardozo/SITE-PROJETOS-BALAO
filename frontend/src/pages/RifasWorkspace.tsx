@@ -1021,41 +1021,43 @@ function RifaDetailView({ rifaId, onBack }: { rifaId: number; onBack: () => void
         {filteredCompradores.length === 0 ? (
           <p className="bandeira-size-hint">Ninguem encontrado.</p>
         ) : (
-          <table className="rifa-compradores-table">
-            <thead>
-              <tr>
-                <th>Nome</th>
-                <th>Whatsapp</th>
-                <th>Numeros</th>
-                <th>Valor</th>
-                <th>Status</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredCompradores.map((c) => (
-                <tr key={c.id}>
-                  <td>{c.nome}</td>
-                  <td>{c.whatsapp}</td>
-                  <td className="rifa-compradores-numeros">{c.numeros.join(', ') || '-'}</td>
-                  <td>{formatMoeda(c.valor_total)}</td>
-                  <td>{COMPRADOR_STATUS_LABEL[c.status] ?? c.status}</td>
-                  <td className="rifa-compradores-actions">
-                    {c.status === 'aguardando_pagamento' ? (
-                      <>
-                        <button type="button" className="mold-secondary-button" onClick={() => void handleConfirmar(c)}>
-                          Confirmar pagamento
-                        </button>
-                        <button type="button" className="mold-secondary-button rifa-recusar-button" onClick={() => void handleRecusar(c)}>
-                          Pagamento nao confirmado
-                        </button>
-                      </>
-                    ) : null}
-                  </td>
+          <div className="table-scroll">
+            <table className="rifa-compradores-table">
+              <thead>
+                <tr>
+                  <th>Nome</th>
+                  <th>Whatsapp</th>
+                  <th>Numeros</th>
+                  <th>Valor</th>
+                  <th>Status</th>
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filteredCompradores.map((c) => (
+                  <tr key={c.id}>
+                    <td>{c.nome}</td>
+                    <td>{c.whatsapp}</td>
+                    <td className="rifa-compradores-numeros">{c.numeros.join(', ') || '-'}</td>
+                    <td>{formatMoeda(c.valor_total)}</td>
+                    <td>{COMPRADOR_STATUS_LABEL[c.status] ?? c.status}</td>
+                    <td className="rifa-compradores-actions">
+                      {c.status === 'aguardando_pagamento' ? (
+                        <>
+                          <button type="button" className="mold-secondary-button" onClick={() => void handleConfirmar(c)}>
+                            Confirmar pagamento
+                          </button>
+                          <button type="button" className="mold-secondary-button rifa-recusar-button" onClick={() => void handleRecusar(c)}>
+                            Pagamento nao confirmado
+                          </button>
+                        </>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

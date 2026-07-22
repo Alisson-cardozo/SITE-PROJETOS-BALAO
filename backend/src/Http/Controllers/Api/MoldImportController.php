@@ -6,7 +6,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Core\Request;
 use App\Core\Response;
-use App\Services\PdfMoldExtractor;
+use App\Services\AiPdfExtractorService;
 use Throwable;
 
 final class MoldImportController
@@ -35,7 +35,7 @@ final class MoldImportController
         }
 
         try {
-            $data = (new PdfMoldExtractor())->extract($binary, $name);
+            $data = (new AiPdfExtractorService())->extract($binary, $name);
         } catch (Throwable $exception) {
             return Response::json(['error' => $exception->getMessage()], 502);
         }

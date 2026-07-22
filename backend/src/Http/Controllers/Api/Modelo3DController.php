@@ -27,7 +27,11 @@ final class Modelo3DController
             return Response::json(['error' => 'Usuario nao encontrado.'], 404);
         }
 
-        return Response::json(['data' => $this->modelos->listAll()]);
+        $isAdmin = $user['role'] === 'admin';
+        $items = $this->modelos->listAll($isAdmin);
+        $data = array_map(fn (array $modelo) => $this->withPermissions($modelo, $user), $items);
+
+        return Response::json(['data' => $data]);
     }
 
     public function store(Request $request): Response
@@ -76,7 +80,32 @@ final class Modelo3DController
 
         $modelo = $this->modelos->renomear($id, $nome, (int) $user['id']);
 
-        return Response::json(['data' => $modelo]);
+        return Response::json(['data' => $this->withPermissions($modelo ?? [], $user)]);
+    }
+
+    public function setHidden(Request $request): Response
+    {
+        $user = $this->currentUser($request);
+        if ($user === null) {
+            return Response::json(['error' => 'Usuario nao encontrado.'], 404);
+        }
+
+        $id = (int) ($request->param('id') ?? 0);
+        $existing = $this->modelos->findRawById($id);
+        if ($existing === null) {
+            return Response::json(['error' => 'Modelo nao encontrado.'], 404);
+        }
+
+        $isOwner = (int) $existing['created_by'] === (int) $user['id'];
+        $isAdmin = $user['role'] === 'admin';
+        if (!$isOwner && !$isAdmin) {
+            return Response::json(['error' => 'Apenas quem criou o modelo ou um administrador pode ocultar.'], 403);
+        }
+
+        $hidden = (bool) $request->input('hidden', false);
+        $modelo = $this->modelos->setHidden($id, $hidden, (int) $user['id']);
+
+        return Response::json(['data' => $this->withPermissions($modelo ?? [], $user)]);
     }
 
     public function destroy(Request $request): Response
@@ -111,6 +140,24 @@ final class Modelo3DController
         }
 
         return $this->users->findById($userId);
+    }
+
+    /**
+     * @param array<string, mixed> $modelo
+     * @param array<string, mixed> $user
+     * @return array<string, mixed>
+     */
+    private function withPermissions(array $modelo, array $user): array
+    {
+        $userId = (int) $user['id'];
+        $isAdmin = $user['role'] === 'admin';
+        $ownerId = (int) ($modelo['created_by']['id'] ?? 0);
+        $isOwner = $ownerId === $userId;
+
+        $modelo['can_edit'] = $isOwner || $isAdmin;
+        $modelo['can_delete'] = $isOwner || $isAdmin;
+
+        return $modelo;
     }
 
     /**

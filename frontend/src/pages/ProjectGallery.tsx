@@ -13,6 +13,9 @@ import type { MoldProjectSummary } from '../types';
 interface ProjectGalleryProps {
   /** "Modificar" abre esse MESMO projeto no Plotter pra editar (nao cria outro). */
   onModify: (project: MoldProjectSummary) => void;
+  /** Some com o atalho quando o admin esconde "Plotter (Moldes Tacos)" — pra
+   * onde "Modificar" leva. Default true (nunca escondido). */
+  showModify?: boolean;
 }
 
 function formatCm(value: number): string {
@@ -32,7 +35,7 @@ function formatDateTime(value: string): string {
   return `${day}/${month}/${year}, ${hour}:${minute}`;
 }
 
-export function ProjectGallery({ onModify }: ProjectGalleryProps) {
+export function ProjectGallery({ onModify, showModify = true }: ProjectGalleryProps) {
   const { token } = useAuth();
   const [projects, setProjects] = useState<MoldProjectSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -156,15 +159,17 @@ export function ProjectGallery({ onModify }: ProjectGalleryProps) {
                   <span className="mold-card-model">{project.modelo}</span>
                 </div>
                 <div className="mold-card-actions">
-                  <button
-                    type="button"
-                    className="mold-card-btn plot"
-                    onClick={() => onModify(project)}
-                    title="Editar tacos, cores e proporcoes no Plotter"
-                  >
-                    <Printer size={15} />
-                    Modificar
-                  </button>
+                  {showModify ? (
+                    <button
+                      type="button"
+                      className="mold-card-btn plot"
+                      onClick={() => onModify(project)}
+                      title="Editar tacos, cores e proporcoes no Plotter"
+                    >
+                      <Printer size={15} />
+                      Modificar
+                    </button>
+                  ) : null}
 
                   <button
                     type="button"

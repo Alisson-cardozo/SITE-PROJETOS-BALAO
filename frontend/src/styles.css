@@ -325,6 +325,26 @@ svg {
   color: #6fa8dc;
 }
 
+.admin-plano-token-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #8fa3bd;
+}
+
+.admin-plano-token-status.configured {
+  color: #6ee7b7;
+}
+
+.admin-plano-form-actions {
+  display: flex;
+  gap: 10px;
+}
+
 .dashboard-header button {
   padding: 10px 18px;
   border-radius: 10px;
@@ -2500,7 +2520,9 @@ svg {
 
   .mold-card-btn {
     flex: 1 1 auto;
-    min-width: 0;
+    min-width: 130px;
+    white-space: normal;
+    justify-content: center;
   }
 
   .plotter-topbar {
@@ -2898,12 +2920,16 @@ svg {
 
   .mold-card-actions {
     flex-direction: row;
+    flex-wrap: wrap;
     width: 100%;
   }
 
   .mold-card-btn {
-    flex: 1;
+    flex: 1 1 auto;
+    min-width: 130px;
     min-height: 42px;
+    white-space: normal;
+    justify-content: center;
   }
 
   .mold-card-body {
@@ -3062,6 +3088,7 @@ svg {
 
 .bandeira-size-fields .auth-field {
   flex: 1 1 0;
+  min-width: 0;
 }
 
 .bandeira-size-hint {
@@ -3514,6 +3541,11 @@ svg {
 @media (max-width: 900px) {
   .bandeira-workspace {
     flex-direction: column;
+    /* Em row (desktop) flex-start evita esticar os paineis pra mesma altura;
+       em column (mobile) essa mesma propriedade vira largura — sem
+       sobrescrever aqui, os paineis encolhem so ate o conteudo (ex: a tabela
+       de usuarios), ignorando a largura disponivel e vazando pra fora. */
+    align-items: stretch;
   }
 
   .bandeira-side-panel {
@@ -3526,21 +3558,58 @@ svg {
 /* ===================== 3D e Fotos (preview do molde em 3D) ===================== */
 
 .modelo3d-canvas-stage {
+  position: relative;
   border-radius: 12px;
   border: 1px solid #263349;
   background: #0f1726;
   width: 100%;
-  aspect-ratio: 4 / 3;
+  /* Proporcao 4:3 via padding-top (% de padding e sempre relativo a LARGURA,
+     regra classica do box model) em vez de "aspect-ratio": esse container
+     esta dentro de um ancestral com container-type:inline-size
+     (.app-content), e "aspect-ratio" entra num ciclo de resolucao com isso
+     no Chromium — o navegador cai num fallback de tamanho absurdo (o board
+     chegou a medir 41730x31297px numa tela de 390px). Padding-top nao tem
+     essa dependencia circular. */
+  padding-top: 75%;
   overflow: hidden;
 }
 
 .modelo3d-canvas-container {
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 0;
 }
 
 .modelo3d-canvas-container canvas {
   display: block;
+}
+
+.modelo3d-canvas-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px;
+  text-align: center;
+  color: #8fa3bd;
+}
+
+.modelo3d-canvas-fallback svg {
+  color: #facc15;
+}
+
+.modelo3d-canvas-fallback p {
+  margin: 0;
+  color: #e6edf5;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.modelo3d-canvas-fallback span {
+  font-size: 12px;
+  max-width: 320px;
 }
 
 .modelo3d-actions-row {
@@ -3562,48 +3631,269 @@ svg {
   cursor: pointer;
 }
 
-.modelo3d-mold-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 10px;
-}
-
-.modelo3d-mold-item {
-  background: rgba(24, 32, 46, 0.9);
-  border: 1px solid #263349;
-  border-radius: 12px;
-  padding: 10px;
+.modelo3d-sidebar-content {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 6px;
+  gap: 14px;
+  width: 100%;
+}
+
+.modelo3d-search-box {
+  position: relative;
+  width: 100%;
+}
+
+.modelo3d-search-input-field {
+  width: 100%;
+  padding: 10px 36px 10px 14px;
+  background: #0f1726;
+  border: 1px solid #263349;
+  border-radius: 20px;
+  color: #f2f6fb;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.modelo3d-search-input-field:focus {
+  border-color: #3f7ac1;
+  box-shadow: 0 0 0 2px rgba(63, 122, 193, 0.25);
+}
+
+.modelo3d-search-clear-btn {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #8fa3bd;
   cursor: pointer;
-  color: #e6edf5;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modelo3d-search-clear-btn:hover {
+  color: #f2f6fb;
+}
+
+.modelo3d-categories-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.modelo3d-category-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 12px 16px;
+  background: rgba(24, 32, 46, 0.8);
+  border: 1px solid #263349;
+  border-radius: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  color: inherit;
+}
+
+.modelo3d-category-card:hover {
+  border-color: #3f7ac1;
+  background: rgba(63, 122, 193, 0.08);
+  transform: translateX(4px);
+}
+
+.modelo3d-category-name {
+  color: #f2f6fb;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.modelo3d-category-badge {
+  background: linear-gradient(135deg, #f39c12, #e74c3c);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 12px;
+  min-width: 24px;
   text-align: center;
 }
 
-.modelo3d-mold-item:hover {
-  border-color: #3f7ac1;
+.modelo3d-list-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
 }
 
-.modelo3d-mold-item.selected {
+.modelo3d-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #263349;
+  padding-bottom: 8px;
+}
+
+.modelo3d-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: #e74c3c;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 4px 0;
+  transition: opacity 0.2s;
+}
+
+.modelo3d-back-btn:hover {
+  opacity: 0.8;
+}
+
+.modelo3d-category-title {
+  color: #8fa3bd;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.modelo3d-mold-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 10px;
+  max-height: 500px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.modelo3d-mold-grid::-webkit-scrollbar {
+  width: 5px;
+}
+
+.modelo3d-mold-grid::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.modelo3d-mold-grid::-webkit-scrollbar-thumb {
+  background: #263349;
+  border-radius: 99px;
+}
+
+.modelo3d-mold-item-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 8px;
+  background: rgba(24, 32, 46, 0.8);
+  border: 1px solid #263349;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: inherit;
+}
+
+.modelo3d-mold-item-card:hover {
+  border-color: #3f7ac1;
+  background: rgba(63, 122, 193, 0.05);
+}
+
+.modelo3d-mold-item-card.selected {
   border-color: #77e6f2;
   background: rgba(119, 230, 242, 0.12);
+  box-shadow: 0 0 10px rgba(119, 230, 242, 0.15);
 }
 
-.modelo3d-mold-item .mold-preview-svg {
+.modelo3d-mold-preview-wrap {
   width: 100%;
-  max-width: 64px;
-  height: auto;
+  max-width: 54px;
+  height: 90px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.modelo3d-mold-item strong {
-  font-size: 12px;
+.modelo3d-mold-preview-wrap svg {
+  width: 100%;
+  height: 100%;
 }
 
-.modelo3d-mold-item span {
+.modelo3d-mold-preview-wrap .mold-preview-shape {
+  fill: #edc240;
+  fill-opacity: 0.15;
+  stroke: #edc240;
+  stroke-width: 1.5;
+}
+
+.modelo3d-mold-preview-wrap .mold-preview-dot {
+  fill: #edc240;
+}
+
+.modelo3d-mold-name {
+  color: #f2f6fb;
   font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  word-break: break-word;
+  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  height: 32px;
+  line-height: 16px;
+}
+
+.modelo3d-empty-state {
+  grid-column: 1 / -1;
   color: #8fa3bd;
+  text-align: center;
+  font-size: 13px;
+  padding: 20px 0;
+}
+
+.modelo3d-recording-overlay {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  pointer-events: none;
+}
+
+.modelo3d-recording-badge {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  padding: 6px 14px;
+  border-radius: 20px;
+  color: #f87171;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modelo3d-recording-dot {
+  width: 8px;
+  height: 8px;
+  background-color: #ef4444;
+  border-radius: 50%;
+  display: inline-block;
+  animation: pulseRecording 1s infinite alternate;
+}
+
+@keyframes pulseRecording {
+  from { opacity: 0.3; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1.15); }
 }
 
 /* ===================== Campos genericos: select/textarea no padrao auth-field ===================== */
@@ -3762,6 +4052,11 @@ svg {
   border: 1px solid #2a3750;
   background: #0f1726;
   color: #e6edf5;
+}
+
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
 }
 
 .rifa-compradores-table {
@@ -4272,6 +4567,7 @@ svg {
 
 .rifa-create-preview-col {
   flex: 0 0 380px;
+  min-width: 0;
   position: sticky;
   top: 18px;
 }
@@ -4572,4 +4868,234 @@ svg {
   vertical-align: -2px;
   margin: 0 2px;
   color: #8fa3bd;
+}
+
+.admin-user-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-end;
+}
+
+.admin-user-actions-row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.admin-user-days-input {
+  width: 64px;
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid #2a3750;
+  background: #0f1726;
+  color: #e6edf5;
+}
+
+.admin-tabs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.admin-tabs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #2a3750;
+  background: #0f1726;
+  cursor: pointer;
+}
+
+.admin-tabs-row.is-hidden {
+  border-color: rgba(220, 38, 38, 0.35);
+  background: rgba(220, 38, 38, 0.06);
+}
+
+.admin-tabs-row-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #8fa3bd;
+  min-width: 0;
+}
+
+.admin-tabs-row-info strong {
+  display: block;
+  color: #e6edf5;
+  font-size: 14px;
+}
+
+.admin-tabs-row-info span {
+  display: block;
+  font-size: 12px;
+  color: #8fa3bd;
+}
+
+.admin-tabs-toggle {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+/* ===================== Rodape (redes sociais) ===================== */
+
+.app-footer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 16px 22px;
+  background: linear-gradient(180deg, #101a2c 0%, #0a1220 100%);
+  font-size: 13px;
+  color: #8fa3bd;
+  overflow: hidden;
+}
+
+.app-footer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #e0393f, #f0a51e, #3f7ac1, #e0393f);
+  background-size: 200% 100%;
+  animation: appFooterGradientMove 6s linear infinite;
+}
+
+@keyframes appFooterGradientMove {
+  0% { background-position: 0% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.app-footer-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.app-footer-sparkle {
+  color: #f0a51e;
+  animation: appFooterSparklePulse 2.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes appFooterSparklePulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.92); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+
+.app-footer-cta {
+  font-weight: 700;
+  background: linear-gradient(90deg, #ff8a5c, #f0a51e 45%, #4f8fd1);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.app-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.app-footer-download {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(63, 122, 193, 0.45);
+  background: rgba(63, 122, 193, 0.12);
+  color: #cfe0f7;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.app-footer-download:hover {
+  transform: translateY(-2px);
+  background: rgba(63, 122, 193, 0.22);
+  border-color: #4f8fd1;
+}
+
+.app-footer-socials {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.app-footer-social-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #162033;
+  border: 1px solid #2a3750;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.app-footer-social-link:hover {
+  transform: translateY(-2px) scale(1.06);
+  border-color: currentColor;
+  background: color-mix(in srgb, currentColor 16%, #162033);
+  box-shadow: 0 0 16px -2px currentColor;
+}
+
+.app-footer-social-link.telegram { color: #29a9eb; }
+.app-footer-social-link.instagram { color: #e1306c; }
+.app-footer-social-link.whatsapp { color: #25d366; }
+
+@media (prefers-reduced-motion: reduce) {
+  .app-footer::before,
+  .app-footer-sparkle {
+    animation: none;
+  }
+}
+
+/* ===================== Solicitar Acesso (paywall) ===================== */
+
+.solicitar-acesso-card {
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+  padding: 20px;
+}
+
+.solicitar-acesso-valor {
+  font-size: 24px;
+  font-weight: 700;
+  color: #f2f6fb;
+  margin: 0;
+}
+
+.solicitar-acesso-status {
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  max-width: 380px;
+}
+
+.solicitar-acesso-status-icon.ok {
+  color: #6ee7b7;
+}
+
+.solicitar-acesso-qr {
+  width: 220px;
+  height: 220px;
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px;
 }

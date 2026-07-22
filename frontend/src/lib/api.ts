@@ -10,12 +10,18 @@ import type {
   MoldPlotterConfig,
   MoldProjectSummary,
   MoldSummary,
+  Pagamento,
+  Plano,
+  PlanoPayload,
+  PlanoPublic,
   Rifa,
   RifaComprador,
   RifaDetail,
   RifaPromocao,
   RifaReservaResponse,
+  SystemSettings,
   User,
+  UserStatus,
 } from '../types';
 
 const API_BASE = '/api';
@@ -73,7 +79,45 @@ export const api = {
   me: (token: string) => request<{ user: User }>('/auth/me', { token }),
   changePassword: (payload: { current_password: string; new_password: string }, token: string) =>
     request<{ ok: boolean }>('/auth/password', { method: 'PUT', body: payload, token }),
+  changeEmail: (payload: { current_password: string; new_email: string }, token: string) =>
+    request<{ user: User }>('/auth/email', { method: 'PUT', body: payload, token }),
   logout: (token: string) => request<{ ok: boolean }>('/auth/logout', { method: 'POST', token }),
+  adminListUsers: (token: string) => request<{ data: User[] }>('/admin/users', { token }),
+  adminUpdateUserStatus: (id: number, status: 'active' | 'blocked', token: string) =>
+    request<{ data: User }>(`/admin/users/${id}/status`, { method: 'PUT', body: { status }, token }),
+  adminGrantAccess: (id: number, days: number, token: string) =>
+    request<{ data: User }>(`/admin/users/${id}/grant-access`, { method: 'PUT', body: { days }, token }),
+  adminDeleteUser: (id: number, token: string) =>
+    request<{ ok: boolean }>(`/admin/users/${id}`, { method: 'DELETE', token }),
+  getSystemSettings: (token: string) => request<{ data: SystemSettings }>('/system-settings', { token }),
+  adminUpdateSystemSettings: (
+    payload: Partial<{
+      telegram: string;
+      instagram: string;
+      whatsapp: string;
+      hidden_nav_items: string[];
+      mercado_pago_public_key: string;
+      mercado_pago_access_token: string;
+    }>,
+    token: string
+  ) => request<{ data: SystemSettings }>('/admin/system-settings', { method: 'PUT', body: payload, token }),
+  adminListPlanos: (token: string) => request<{ data: Plano[] }>('/admin/planos', { token }),
+  adminCreatePlano: (payload: PlanoPayload, token: string) =>
+    request<{ data: Plano }>('/admin/planos', { method: 'POST', body: payload, token }),
+  adminUpdatePlano: (id: number, payload: PlanoPayload, token: string) =>
+    request<{ data: Plano }>(`/admin/planos/${id}`, { method: 'PUT', body: payload, token }),
+  adminSetPlanoAtivo: (id: number, ativo: boolean, token: string) =>
+    request<{ data: Plano }>(`/admin/planos/${id}/ativo`, { method: 'PUT', body: { ativo }, token }),
+  adminDeletePlano: (id: number, token: string) =>
+    request<{ ok: boolean }>(`/admin/planos/${id}`, { method: 'DELETE', token }),
+  listPlanos: (token: string) => request<{ data: PlanoPublic[] }>('/planos', { token }),
+  createPagamento: (planoId: number, token: string) =>
+    request<{ data: Pagamento }>('/plano/pagamentos', { method: 'POST', body: { plano_id: planoId }, token }),
+  getPagamento: (id: number, token: string) =>
+    request<{ data: Pagamento; user: { status: UserStatus; access_expires_at: string | null } | null }>(
+      `/plano/pagamentos/${id}`,
+      { token }
+    ),
   listMolds: (token: string) => request<{ data: MoldSummary[] }>('/molds', { token }),
   getMold: (id: number, token: string) => request<{ data: MoldDetail }>(`/molds/${id}`, { token }),
   createMold: (payload: MoldPayload, token: string) =>
@@ -87,6 +131,10 @@ export const api = {
   listModelos3D: (token: string) => request<{ data: Modelo3D[] }>('/modelos-3d', { token }),
   createModelo3D: (payload: Modelo3DPayload, token: string) =>
     request<{ data: Modelo3D }>('/modelos-3d', { method: 'POST', body: payload, token }),
+  renameModelo3D: (id: number, nome: string, token: string) =>
+    request<{ data: Modelo3D }>(`/modelos-3d/${id}`, { method: 'PUT', body: { nome }, token }),
+  setModelo3DHidden: (id: number, hidden: boolean, token: string) =>
+    request<{ data: Modelo3D }>(`/modelos-3d/${id}/hidden`, { method: 'PUT', body: { hidden }, token }),
   deleteModelo3D: (id: number, token: string) =>
     request<{ ok: boolean }>(`/modelos-3d/${id}`, { method: 'DELETE', token }),
   listProjects: (token: string) => request<{ data: MoldProjectSummary[] }>('/projects', { token }),

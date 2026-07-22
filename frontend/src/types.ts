@@ -1,5 +1,5 @@
 export type UserRole = 'admin' | 'user';
-export type UserStatus = 'active' | 'blocked';
+export type UserStatus = 'active' | 'blocked' | 'pending_payment';
 
 export interface User {
   id: number;
@@ -7,6 +7,55 @@ export interface User {
   email: string;
   role: UserRole;
   status: UserStatus;
+  access_expires_at?: string | null;
+  created_at?: string | null;
+}
+
+export interface SystemSettings {
+  telegram: string | null;
+  instagram: string | null;
+  whatsapp: string | null;
+  hidden_nav_items: string[];
+  mercado_pago_public_key: string | null;
+  mercado_pago_access_token_configured: boolean;
+}
+
+export interface Plano {
+  id: number;
+  nome: string;
+  valor: number;
+  dias_acesso: number;
+  ativo: boolean;
+  created_by: { id: number; name: string };
+  updated_by: { id: number; name: string };
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlanoPublic {
+  id: number;
+  nome: string;
+  valor: number;
+  dias_acesso: number;
+}
+
+export interface PlanoPayload {
+  nome: string;
+  valor: number;
+  dias_acesso: number;
+}
+
+export type PagamentoStatus = 'pendente' | 'aprovado' | 'rejeitado';
+
+export interface Pagamento {
+  id: number;
+  plano_id: number;
+  valor: number;
+  status: PagamentoStatus;
+  qr_code: string | null;
+  qr_code_base64: string | null;
+  created_at: string;
+  paid_at: string | null;
 }
 
 export interface AuthResponse {
@@ -88,6 +137,9 @@ export interface Modelo3D {
   quantidade_gomos: number;
   altura_total_cm: number;
   pontos: MoldPoint[];
+  hidden: boolean;
+  can_edit: boolean;
+  can_delete: boolean;
   created_by: MoldUserRef;
   updated_by: MoldUserRef;
   created_at: string;

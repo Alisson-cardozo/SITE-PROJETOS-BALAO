@@ -25,6 +25,7 @@ import { hexToRgb } from '../lib/colorMath';
 import { buildBandeiraPdf, type BandeiraDivisionMode } from '../lib/bandeiraPdf';
 import { downloadBlob, slugifyFilename } from '../lib/pdfExport';
 import { SendBandeiraEmailModal } from '../components/SendBandeiraEmailModal';
+import { numericFieldProps } from '../lib/numericInput';
 
 /** Tamanho base (px de tela, antes do zoom) de cada celula. Grades muito
  * grandes (depois de expandir pro tamanho real) usam um valor menor, senao o
@@ -712,12 +713,7 @@ export function BandeiraWorkspace() {
 
                 <label className="auth-field">
                   <span>Quantidade de cores desejada</span>
-                  <input
-                    type="number"
-                    min={2}
-                    value={targetColorCount}
-                    onChange={(e) => setTargetColorCount(Math.max(2, Number(e.target.value) || 2))}
-                  />
+                  <input type="number" min={2} {...numericFieldProps(targetColorCount, setTargetColorCount, 2)} />
                 </label>
                 <p className="bandeira-hint">Da pra ajustar a quantidade de cores de novo depois de taquear.</p>
 
@@ -860,15 +856,27 @@ export function BandeiraWorkspace() {
                 <input
                   type="number"
                   min={1}
-                  value={Math.round((Number(larguraCm) || 0) / CM_POR_PIXEL)}
-                  onChange={(e) => setLarguraCm(String(Math.max(1, Number(e.target.value) || 1) * CM_POR_PIXEL))}
+                  value={larguraCm === '' ? '' : Math.round((Number(larguraCm) || 0) / CM_POR_PIXEL)}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setLarguraCm(raw === '' ? '' : String(Math.max(0, Number(raw) || 0) * CM_POR_PIXEL));
+                  }}
+                  onBlur={() => {
+                    if (!larguraCm || Number(larguraCm) < CM_POR_PIXEL) setLarguraCm(String(CM_POR_PIXEL));
+                  }}
                 />
                 <span>x</span>
                 <input
                   type="number"
                   min={1}
-                  value={Math.round((Number(alturaCm) || 0) / CM_POR_PIXEL)}
-                  onChange={(e) => setAlturaCm(String(Math.max(1, Number(e.target.value) || 1) * CM_POR_PIXEL))}
+                  value={alturaCm === '' ? '' : Math.round((Number(alturaCm) || 0) / CM_POR_PIXEL)}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setAlturaCm(raw === '' ? '' : String(Math.max(0, Number(raw) || 0) * CM_POR_PIXEL));
+                  }}
+                  onBlur={() => {
+                    if (!alturaCm || Number(alturaCm) < CM_POR_PIXEL) setAlturaCm(String(CM_POR_PIXEL));
+                  }}
                 />
                 <span>px</span>
               </div>
@@ -907,8 +915,7 @@ export function BandeiraWorkspace() {
                   type="number"
                   min={2}
                   max={colorSummary.length || 2}
-                  value={targetColorCount}
-                  onChange={(e) => setTargetColorCount(Math.max(2, Number(e.target.value) || 2))}
+                  {...numericFieldProps(targetColorCount, setTargetColorCount, 2)}
                 />
                 <button type="button" className="mold-import-button" onClick={handleReduceColors} disabled={reducing}>
                   {reducing ? <Loader2 size={15} className="mold-import-spinner" /> : null}
@@ -926,12 +933,7 @@ export function BandeiraWorkspace() {
               <p className="bandeira-hint">Escolha qualquer cor nova (nao precisa existir na imagem) pra desenhar ou criar a moldura abaixo.</p>
 
               <div className="bandeira-border-row">
-                <input
-                  type="number"
-                  min={1}
-                  value={borderThickness}
-                  onChange={(e) => setBorderThickness(Math.max(1, Number(e.target.value) || 1))}
-                />
+                <input type="number" min={1} {...numericFieldProps(borderThickness, setBorderThickness, 1)} />
                 <span>px de espessura</span>
               </div>
               <button type="button" className="mold-import-button" onClick={handleCreateBorder}>
@@ -1032,16 +1034,14 @@ export function BandeiraWorkspace() {
                   <input
                     type="number"
                     min={1}
-                    value={coarseCols}
-                    onChange={(e) => setCoarseCols(Math.max(1, Number(e.target.value) || 1))}
+                    {...numericFieldProps(coarseCols, setCoarseCols, 1)}
                     title={isRealScale ? 'Colunas (cm) por folha/taco' : 'Colunas (tacos) por folha/taco'}
                   />
                   <span>x</span>
                   <input
                     type="number"
                     min={1}
-                    value={coarseRows}
-                    onChange={(e) => setCoarseRows(Math.max(1, Number(e.target.value) || 1))}
+                    {...numericFieldProps(coarseRows, setCoarseRows, 1)}
                     title={isRealScale ? 'Linhas (cm) por folha/taco' : 'Linhas (tacos) por folha/taco'}
                   />
                 </div>
@@ -1074,12 +1074,7 @@ export function BandeiraWorkspace() {
               </p>
               <label className="auth-field">
                 <span>Tamanho do taco pra cortar (cm)</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={tacoSizeCm}
-                  onChange={(e) => setTacoSizeCm(Math.max(1, Number(e.target.value) || 1))}
-                />
+                <input type="number" min={1} {...numericFieldProps(tacoSizeCm, setTacoSizeCm, 1)} />
               </label>
               <p className="bandeira-hint">
                 Uma folha tem <strong>{FOLHA_NOMINAL_LARGURA_CM}x{FOLHA_NOMINAL_ALTURA_CM}cm</strong>, mas so a area

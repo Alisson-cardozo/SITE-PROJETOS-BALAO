@@ -8,9 +8,10 @@ use App\Support\Db;
 
 final class Modelo3DService
 {
-    public function listAll(): array
+    public function listAll(bool $includeHidden = false): array
     {
-        $sql = <<<'SQL'
+        $where = $includeHidden ? '' : 'WHERE m.hidden = 0';
+        $sql = <<<SQL
             SELECT
               m.*,
               creator.name AS created_by_name,
@@ -18,6 +19,7 @@ final class Modelo3DService
             FROM modelos_3d m
             INNER JOIN users creator ON creator.id = m.created_by
             INNER JOIN users updater ON updater.id = m.updated_by
+            {$where}
             ORDER BY m.nome ASC, m.id ASC
         SQL;
 
@@ -105,6 +107,16 @@ final class Modelo3DService
         return $this->findById($id);
     }
 
+    public function setHidden(int $id, bool $hidden, int $userId): ?array
+    {
+        $stmt = Db::connection()->prepare(
+            'UPDATE modelos_3d SET hidden = :hidden, updated_by = :updated_by WHERE id = :id'
+        );
+        $stmt->execute(['id' => $id, 'hidden' => $hidden ? 1 : 0, 'updated_by' => $userId]);
+
+        return $this->findById($id);
+    }
+
     /**
      * @param array<int, array{altura_cm:float|int|string, largura_meia_cm:float|int|string}> $pontos
      */
@@ -126,6 +138,7 @@ final class Modelo3DService
             'quantidade_gomos' => (int) $row['quantidade_gomos'],
             'altura_total_cm' => (float) $row['altura_total_cm'],
             'pontos' => $this->decodePontos($row['pontos_json'] ?? '[]'),
+            'hidden' => ((int) ($row['hidden'] ?? 0)) === 1,
             'created_by' => [
                 'id' => (int) $row['created_by'],
                 'name' => (string) ($row['created_by_name'] ?? ''),

@@ -29,9 +29,12 @@ final class UserService
 
     public function create(string $name, string $email, string $password): array
     {
+        // pending_payment: cadastro novo fica bloqueado ate pagar um plano
+        // (ver PaidAccessMiddleware) -- vira 'active' quando um pagamento e
+        // aprovado (PagamentoService::reconcileRow -> grantAccess()).
         $stmt = Db::connection()->prepare(
             'INSERT INTO users (name, email, password_hash, role, status)
-             VALUES (:name, :email, :password_hash, "user", "active")'
+             VALUES (:name, :email, :password_hash, "user", "pending_payment")'
         );
         $stmt->execute([
             'name' => $name,
@@ -53,6 +56,42 @@ final class UserService
         ]);
     }
 
+    public function updateEmail(int $userId, string $newEmail): void
+    {
+        $stmt = Db::connection()->prepare('UPDATE users SET email = :email WHERE id = :id');
+        $stmt->execute(['id' => $userId, 'email' => $newEmail]);
+    }
+
+    public function listAll(): array
+    {
+        return Db::connection()->query('SELECT * FROM users ORDER BY created_at DESC')->fetchAll();
+    }
+
+    public function updateStatus(int $userId, string $status): void
+    {
+        $stmt = Db::connection()->prepare('UPDATE users SET status = :status WHERE id = :id');
+        $stmt->execute(['id' => $userId, 'status' => $status]);
+    }
+
+    /** "Liberar acesso": reativa a conta e define ate quando o acesso vale. */
+    public function grantAccess(int $userId, int $days): void
+    {
+        $stmt = Db::connection()->prepare(
+            "UPDATE users SET status = 'active', access_expires_at = DATE_ADD(NOW(), INTERVAL :days DAY) WHERE id = :id"
+        );
+        $stmt->execute(['id' => $userId, 'days' => $days]);
+    }
+
+    /**
+     * @throws \PDOException se o usuario tiver dados vinculados (moldes, rifas etc —
+     *   FK com ON DELETE RESTRICT de proposito, pra nunca apagar historico junto)
+     */
+    public function delete(int $userId): void
+    {
+        $stmt = Db::connection()->prepare('DELETE FROM users WHERE id = :id');
+        $stmt->execute(['id' => $userId]);
+    }
+
     public function toPublicArray(array $user): array
     {
         return [
@@ -61,6 +100,8 @@ final class UserService
             'email' => $user['email'],
             'role' => $user['role'],
             'status' => $user['status'],
+            'access_expires_at' => $user['access_expires_at'] ?? null,
+            'created_at' => $user['created_at'] ?? null,
         ];
     }
 }

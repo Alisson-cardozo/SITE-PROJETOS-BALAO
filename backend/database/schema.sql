@@ -7,12 +7,30 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(180) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   role ENUM('admin', 'user') NOT NULL DEFAULT 'user',
-  status ENUM('active', 'blocked') NOT NULL DEFAULT 'active',
+  -- pending_payment: cadastro novo que ainda nao pagou nenhum plano -- login
+  -- funciona normalmente (pra ele conseguir chegar na aba "Solicitar Acesso"),
+  -- mas nenhuma outra funcionalidade fica liberada (ver PaidAccessMiddleware).
+  -- Vira 'active' automaticamente quando um pagamento e aprovado.
+  status ENUM('active', 'blocked', 'pending_payment') NOT NULL DEFAULT 'active',
+  -- NULL = acesso sem prazo. Setado quando o admin "libera acesso por X dias"
+  -- (ou quando um pagamento e aprovado) — login passa a ser recusado depois
+  -- dessa data mesmo com status='active'.
+  access_expires_at DATETIME NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_users_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Coluna nova pra quem ja tinha rodado o schema antes dessa mudanca — rode
+-- manualmente uma unica vez (MySQL nao aceita "ADD COLUMN IF NOT EXISTS"
+-- nessa forma). Instalacao nova ja nasce com a coluna via CREATE TABLE acima.
+-- Sem ponto-e-virgula no exemplo de proposito, ver nota no fim do arquivo:
+-- ALTER TABLE users ADD COLUMN access_expires_at DATETIME NULL AFTER status
+
+-- Idem pro ENUM de status ganhar 'pending_payment' num banco que ja tinha a
+-- tabela `users` (instalacao nova ja nasce certa via CREATE TABLE acima):
+-- ALTER TABLE users MODIFY COLUMN status ENUM('active', 'blocked', 'pending_payment') NOT NULL DEFAULT 'active'
 
 CREATE TABLE IF NOT EXISTS api_tokens (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -132,6 +150,9 @@ CREATE TABLE IF NOT EXISTS modelos_3d (
   quantidade_gomos INT UNSIGNED NOT NULL,
   altura_total_cm DECIMAL(10, 2) NOT NULL DEFAULT 0,
   pontos_json JSON NOT NULL,
+  -- Oculto some da lista pra usuario comum, mas o admin (ou quem criou)
+  -- continua vendo pra poder desfazer — mesmo dono/admin que ja edita e exclui.
+  hidden TINYINT(1) NOT NULL DEFAULT 0,
   created_by BIGINT UNSIGNED NOT NULL,
   updated_by BIGINT UNSIGNED NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -143,6 +164,13 @@ CREATE TABLE IF NOT EXISTS modelos_3d (
   CONSTRAINT fk_modelos_3d_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT fk_modelos_3d_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Coluna nova pra quem ja tinha rodado o schema antes dessa mudanca — MySQL
+-- (ao contrario do MariaDB) nao aceita "ADD COLUMN IF NOT EXISTS" nessa forma,
+-- entao rode essa linha manualmente uma unica vez num banco que ja tinha a
+-- tabela `modelos_3d` (instalacao nova ja nasce com a coluna via CREATE TABLE
+-- acima). Sem ponto-e-virgula no exemplo de proposito, ver nota no fim do arquivo:
+-- ALTER TABLE modelos_3d ADD COLUMN hidden TINYINT(1) NOT NULL DEFAULT 0 AFTER pontos_json
 
 -- Modulo Rifas: configuracao de pagamento por usuario (token do Mercado Pago
 -- guardado criptografado — ver App\Support\Crypto). 1 linha por usuario.
@@ -262,4 +290,92 @@ ALTER TABLE rifas MODIFY foto3_path VARCHAR(255) NULL;
 -- "ADD COLUMN IF NOT EXISTS" nessa forma, entao rode essa linha manualmente
 -- uma unica vez num banco que ja tinha a tabela `rifas` (dai em diante o
 -- CREATE TABLE acima ja cobre instalacoes novas):
--- ALTER TABLE rifas ADD COLUMN chave_pix VARCHAR(140) NULL AFTER whatsapp_contato;
+-- ALTER TABLE rifas ADD COLUMN chave_pix VARCHAR(140) NULL AFTER whatsapp_contato
+-- (sem ponto-e-virgula de proposito nesses exemplos comentados -- migrate.php
+-- parte o arquivo ingenuamente por ponto-e-virgula, entao um exemplo com um
+-- no fim quebraria o proximo statement real ao ser executado)
+
+-- Configuracao global do sistema (linha unica, id sempre 1): redes sociais do
+-- admin (mostradas no rodape pra quem estiver logado) e a lista de abas do
+-- menu que o admin escolheu esconder dos usuarios comuns. hidden_nav_items_json
+-- guarda um array JSON de ids (ex: '["bandeiras","baixar-app"]') como TEXT,
+-- decodificado em PHP -- mesmo padrao ja usado em `molds.pontos_json`.
+CREATE TABLE IF NOT EXISTS system_settings (
+  id TINYINT UNSIGNED NOT NULL,
+  telegram VARCHAR(255) NULL,
+  instagram VARCHAR(255) NULL,
+  whatsapp VARCHAR(255) NULL,
+  hidden_nav_items_json TEXT NULL,
+  -- Credenciais do Mercado Pago (dono do sistema, compartilhadas por todos os
+  -- planos). O access token e uma credencial de API de verdade, entao vai
+  -- criptografado em repouso (Crypto::encrypt, chave = APP_KEY) -- nunca
+  -- decodificado de volta pro frontend, so um booleano informando se ja foi
+  -- configurado. O valor/dias de cada plano ficam na tabela `planos` (varios
+  -- planos possiveis, ex: mensal/anual), nao aqui.
+  mercado_pago_public_key VARCHAR(255) NULL,
+  mercado_pago_access_token_encrypted TEXT NULL,
+  updated_by BIGINT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  CONSTRAINT fk_system_settings_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Colunas novas pra quem ja tinha rodado o schema antes dessa mudanca — MySQL
+-- (ao contrario do MariaDB) nao aceita "ADD COLUMN IF NOT EXISTS" nessa forma,
+-- entao rode essas linhas manualmente uma unica vez num banco que ja tinha a
+-- tabela `system_settings` (instalacao nova ja nasce com elas via CREATE
+-- TABLE acima). Sem ponto-e-virgula nos exemplos de proposito, ver nota no
+-- fim do arquivo:
+-- ALTER TABLE system_settings ADD COLUMN mercado_pago_public_key VARCHAR(255) NULL AFTER hidden_nav_items_json
+-- ALTER TABLE system_settings ADD COLUMN mercado_pago_access_token_encrypted TEXT NULL AFTER mercado_pago_public_key
+-- Se o banco ainda tiver as colunas plano_valor/plano_dias_acesso de uma
+-- versao anterior (substituidas pela tabela `planos` abaixo), rode:
+-- ALTER TABLE system_settings DROP COLUMN plano_valor
+-- ALTER TABLE system_settings DROP COLUMN plano_dias_acesso
+
+-- Catalogo de planos pagos (admin cadastra quantos quiser, ex: mensal/anual).
+-- Um plano com pagamentos ja registrados nao pode ser excluido (FK RESTRICT
+-- em `pagamentos.plano_id`) -- o admin desativa (ativo=0) em vez de excluir.
+CREATE TABLE IF NOT EXISTS planos (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  nome VARCHAR(120) NOT NULL,
+  valor DECIMAL(10, 2) NOT NULL,
+  dias_acesso INT UNSIGNED NOT NULL,
+  ativo TINYINT(1) NOT NULL DEFAULT 1,
+  created_by BIGINT UNSIGNED NOT NULL,
+  updated_by BIGINT UNSIGNED NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_planos_created_by (created_by),
+  KEY idx_planos_updated_by (updated_by),
+  CONSTRAINT fk_planos_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_planos_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Cobrancas Pix (Mercado Pago) por usuario/plano. `valor` e uma copia do
+-- preco do plano no momento do pagamento (o preco do plano pode mudar depois
+-- sem afetar cobrancas ja criadas). `mp_payment_id` so e preenchido depois
+-- que o Mercado Pago aceita a cobranca -- unico, mas MySQL permite varios
+-- NULL num UNIQUE KEY, entao uma cobranca que falhou ao criar (nunca chegou
+-- a ter um id do MP) nao trava a unicidade.
+CREATE TABLE IF NOT EXISTS pagamentos (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NOT NULL,
+  plano_id BIGINT UNSIGNED NOT NULL,
+  valor DECIMAL(10, 2) NOT NULL,
+  status ENUM('pendente', 'aprovado', 'rejeitado') NOT NULL DEFAULT 'pendente',
+  mp_payment_id VARCHAR(64) NULL,
+  qr_code TEXT NULL,
+  qr_code_base64 MEDIUMTEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  paid_at TIMESTAMP NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_pagamentos_mp_payment_id (mp_payment_id),
+  KEY idx_pagamentos_user (user_id),
+  KEY idx_pagamentos_status (status),
+  CONSTRAINT fk_pagamentos_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_pagamentos_plano FOREIGN KEY (plano_id) REFERENCES planos(id) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

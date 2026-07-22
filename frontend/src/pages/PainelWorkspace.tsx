@@ -16,6 +16,7 @@ import {
 import { buildPainelPdf, type PainelDisplayMode, type PainelDivisionMode } from '../lib/painelPdf';
 import { downloadBlob, slugifyFilename } from '../lib/pdfExport';
 import { SendPainelEmailModal } from '../components/SendPainelEmailModal';
+import { numericFieldProps } from '../lib/numericInput';
 
 /** Preto e tratado como "modulo apagado/fundo" — nunca entra na numeracao ou
  * na contagem de modulos (nao se compra modulo preto). */
@@ -689,12 +690,7 @@ export function PainelWorkspace() {
 
                 <label className="auth-field">
                   <span>Quantidade de cores desejada</span>
-                  <input
-                    type="number"
-                    min={2}
-                    value={targetColorCount}
-                    onChange={(e) => setTargetColorCount(Math.max(2, Number(e.target.value) || 2))}
-                  />
+                  <input type="number" min={2} {...numericFieldProps(targetColorCount, setTargetColorCount, 2)} />
                 </label>
                 <p className="bandeira-hint">Da pra ajustar a quantidade de cores de novo depois de vetorizar.</p>
 
@@ -835,8 +831,7 @@ export function PainelWorkspace() {
                   type="number"
                   min={2}
                   max={countableColorSummary.length || 2}
-                  value={targetColorCount}
-                  onChange={(e) => setTargetColorCount(Math.max(2, Number(e.target.value) || 2))}
+                  {...numericFieldProps(targetColorCount, setTargetColorCount, 2)}
                 />
                 <button type="button" className="mold-import-button" onClick={handleReduceColors} disabled={reducing}>
                   {reducing ? <Loader2 size={15} className="mold-import-spinner" /> : null}
@@ -858,7 +853,7 @@ export function PainelWorkspace() {
               <p className="bandeira-hint">Escolha qualquer cor nova (nao precisa existir na imagem) pra desenhar ou criar a moldura abaixo.</p>
 
               <div className="bandeira-border-row">
-                <input type="number" min={1} value={borderThickness} onChange={(e) => setBorderThickness(Math.max(1, Number(e.target.value) || 1))} />
+                <input type="number" min={1} {...numericFieldProps(borderThickness, setBorderThickness, 1)} />
                 <span>px de espessura</span>
               </div>
               <button type="button" className="mold-import-button" onClick={handleCreateBorder}>
@@ -994,8 +989,7 @@ export function PainelWorkspace() {
                       type="number"
                       min={2}
                       max={countableColorSummary.length || 2}
-                      value={targetColorCount}
-                      onChange={(e) => setTargetColorCount(Math.max(2, Number(e.target.value) || 2))}
+                      {...numericFieldProps(targetColorCount, setTargetColorCount, 2)}
                     />
                     <button type="button" className="mold-import-button" onClick={handleReduceColors} disabled={reducing}>
                       {reducing ? <Loader2 size={15} className="mold-import-spinner" /> : null}
@@ -1012,7 +1006,7 @@ export function PainelWorkspace() {
                   </div>
 
                   <div className="bandeira-border-row">
-                    <input type="number" min={1} value={borderThickness} onChange={(e) => setBorderThickness(Math.max(1, Number(e.target.value) || 1))} />
+                    <input type="number" min={1} {...numericFieldProps(borderThickness, setBorderThickness, 1)} />
                     <span>modulos de espessura</span>
                   </div>
                   <button type="button" className="mold-import-button" onClick={handleCreateBorder}>
@@ -1107,16 +1101,14 @@ export function PainelWorkspace() {
                       <input
                         type="number"
                         min={1}
-                        value={divisionCols}
-                        onChange={(e) => setDivisionCols(Math.max(1, Number(e.target.value) || 1))}
+                        {...numericFieldProps(divisionCols, setDivisionCols, 1)}
                         title="Colunas por divisao"
                       />
                       <span>x</span>
                       <input
                         type="number"
                         min={1}
-                        value={divisionRows}
-                        onChange={(e) => setDivisionRows(Math.max(1, Number(e.target.value) || 1))}
+                        {...numericFieldProps(divisionRows, setDivisionRows, 1)}
                         title="Linhas por divisao"
                       />
                     </div>

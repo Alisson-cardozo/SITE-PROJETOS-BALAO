@@ -65,8 +65,14 @@ final class AuthController
             return Response::json(['error' => 'E-mail ou senha invalidos.'], 401);
         }
 
-        if ($user['status'] !== 'active') {
+        if ($user['status'] === 'blocked') {
             return Response::json(['error' => 'Este acesso esta bloqueado. Fale com o administrador.'], 403);
+        }
+        // pending_payment passa direto -- e assim que um cadastro novo, ainda
+        // sem plano pago, consegue logar pra chegar na aba "Solicitar Acesso"
+        // (o resto do sistema fica bloqueado pelo PaidAccessMiddleware, nao aqui).
+        if ($user['status'] === 'active' && $user['access_expires_at'] !== null && strtotime((string) $user['access_expires_at']) < time()) {
+            return Response::json(['error' => 'Seu acesso expirou. Fale com o administrador.'], 403);
         }
 
         $token = $this->tokens->issue((int) $user['id']);
@@ -112,6 +118,35 @@ final class AuthController
         $this->users->updatePassword((int) $user['id'], $newPassword);
 
         return Response::json(['ok' => true]);
+    }
+
+    public function changeEmail(Request $request): Response
+    {
+        $user = $this->users->findById((int) $request->attribute('user_id'));
+        if ($user === null) {
+            return Response::json(['error' => 'Usuario nao encontrado.'], 404);
+        }
+
+        $currentPassword = (string) $request->input('current_password', '');
+        $newEmail = strtolower(trim((string) $request->input('new_email', '')));
+
+        $errors = [];
+        if (!Password::verify($currentPassword, $user['password_hash'])) {
+            $errors['current_password'] = 'Senha atual incorreta.';
+        }
+        if ($newEmail === '' || filter_var($newEmail, FILTER_VALIDATE_EMAIL) === false) {
+            $errors['new_email'] = 'Informe um e-mail valido.';
+        } elseif ($newEmail !== $user['email'] && $this->users->findByEmail($newEmail) !== null) {
+            $errors['new_email'] = 'Este e-mail ja esta em uso.';
+        }
+
+        if ($errors !== []) {
+            return Response::json(['errors' => $errors, 'error' => 'Verifique os campos.'], 422);
+        }
+
+        $this->users->updateEmail((int) $user['id'], $newEmail);
+
+        return Response::json(['user' => $this->users->toPublicArray($this->users->findById((int) $user['id']))]);
     }
 
     public function logout(Request $request): Response
