@@ -1,5 +1,10 @@
 import { jsPDF } from 'jspdf';
 import { buildBalaoConeModel, buildConeFan, type ConeFan, type Pt } from './coneGeometry';
+import {
+  type SectionTacoConfigMap,
+  type SectionRatios,
+  buildMoldProfile,
+} from './moldGeometry';
 import type { MoldPoint } from '../types';
 
 export interface RiscadoPdfOptions {
@@ -11,6 +16,9 @@ export interface RiscadoPdfOptions {
   /** Quantos gomos o cliente desenha de fato — tambem quantos entram no leque desenhado. */
   desenhosUnicos: number;
   pontos: MoldPoint[];
+  tacoConfigs: SectionTacoConfigMap;
+  sectionRatios: SectionRatios;
+  sectionColors: Record<string, string>;
 }
 
 function formatCm(value: number): string {
@@ -53,12 +61,30 @@ function drawPolyline(doc: jsPDF, pts: Pt[], close = false): void {
 }
 
 function drawFan(doc: jsPDF, fan: ConeFan): void {
+  fan.tacoFills.forEach((fill) => {
+    doc.setFillColor(fill.color);
+    const pdfPts = fill.points.map(([x, y]) => ({ x, y }));
+    if (pdfPts.length >= 3) {
+      (doc as any).polygon(pdfPts, 'F');
+    }
+  });
+
   doc.setDrawColor(...OUTLINE_COLOR);
   doc.setLineWidth(OUTLINE_LINE_CM);
   drawPolyline(doc, fan.outlinePoints, true);
 
+  doc.setDrawColor(26, 26, 26);
+  doc.setLineWidth(DIVISOR_LINE_CM * 0.7);
+  fan.horizontalTacoLines.forEach((pts) => {
+    drawPolyline(doc, pts, false);
+  });
+
+  fan.verticalTacoLines.forEach((pts) => {
+    drawPolyline(doc, pts, false);
+  });
+
   doc.setDrawColor(...DIVISOR_COLOR);
-  doc.setLineWidth(DIVISOR_LINE_CM);
+  doc.setLineWidth(DIVISOR_LINE_CM * 1.5);
   fan.divisoriasPoints.forEach((pts) => {
     drawPolyline(doc, pts, false);
   });
@@ -205,6 +231,11 @@ export function buildRiscadoPdf(options: RiscadoPdfOptions): Blob {
     throw new Error('Molde sem pontos suficientes pra gerar o risco.');
   }
 
+  const profile = buildMoldProfile(options.pontos, options.sectionRatios, options.tacoConfigs);
+  if (!profile) {
+    throw new Error('Nao foi possivel calcular o perfil do molde.');
+  }
+
   const numGomos = options.desenhosUnicos;
 
   const bicoTopoWidth =
@@ -275,8 +306,8 @@ export function buildRiscadoPdf(options: RiscadoPdfOptions): Blob {
     const apiceYBoca = originY + alturaTotalLeqCm;
     const seamY = originY + seamYGlobal;
 
-    const bicoFan = buildConeFan(model.bico, numGomos, false, apiceX, apiceYBico);
-    const bocaFan = buildConeFan(model.boca, numGomos, true, apiceX, apiceYBoca);
+    const bicoFan = buildConeFan(model.bico, numGomos, false, apiceX, apiceYBico, profile, options.tacoConfigs, true);
+    const bocaFan = buildConeFan(model.boca, numGomos, true, apiceX, apiceYBoca, profile, options.tacoConfigs, false);
 
     drawFan(doc, bicoFan);
     drawFan(doc, bocaFan);

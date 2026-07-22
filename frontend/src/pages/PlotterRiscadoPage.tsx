@@ -3,6 +3,16 @@ import { ArrowLeft, Download, Loader2, Ruler } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { buildBalaoConeModel, buildConeFan, pointsToClosedPathD, pointsToPolylineAttr } from '../lib/coneGeometry';
+import {
+  SECTION_COLORS,
+  SectionTacoConfigMap,
+  SectionRatios,
+  createDefaultTacoConfigs,
+  DEFAULT_SECTION_RATIOS,
+  buildMoldProfile,
+} from '../lib/moldGeometry';
+
+const DEFAULT_COLORS = { ...SECTION_COLORS };
 import { downloadBlob, slugifyFilename } from '../lib/pdfExport';
 import { buildRiscadoPdf } from '../lib/plotterRiscadoPdf';
 import type { MoldDetail } from '../types';
@@ -51,6 +61,14 @@ export function PlotterRiscadoPage({ moldId, moldHint, onBackToGallery }: Plotte
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
+  const [tacoConfigs, setTacoConfigs] = useState<SectionTacoConfigMap>({
+    boca: { partitions: [] },
+    bojo: { partitions: [] },
+    bico: { partitions: [] },
+  });
+  const [sectionRatios, setSectionRatios] = useState<SectionRatios>({ ...DEFAULT_SECTION_RATIOS });
+  const [sectionColors, setSectionColors] = useState<Record<string, string>>(DEFAULT_COLORS);
+
   useEffect(() => {
     if (!token || moldId == null) {
       setMold(null);
@@ -65,13 +83,29 @@ export function PlotterRiscadoPage({ moldId, moldHint, onBackToGallery }: Plotte
 
     api
       .getMold(moldId, token)
-      .then((response) => {
-        if (cancelled) return;
-        setMold(response.data);
-        setModo('repeticao');
-        setRepeticoesStr('1');
-        setGomosStr(String(response.data.quantidade_gomos));
-        setLastEdited('repeticoes');
+      .then((moldResponse) => {
+        return api.listProjects(token).then((projectsResponse: any) => {
+          if (cancelled) return;
+          setMold(moldResponse.data);
+
+          const moldProjects = projectsResponse.data.filter((p: any) => p.mold_id === moldId);
+          let loadedConfig = null;
+          if (moldProjects.length > 0) {
+            moldProjects.sort(
+              (a: any, b: any) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+            );
+            loadedConfig = moldProjects[0].plotter_config;
+          }
+
+          setTacoConfigs(loadedConfig?.taco_configs ?? createDefaultTacoConfigs(moldResponse.data.bainha_cm || 1));
+          setSectionRatios(loadedConfig?.section_ratios ?? { ...DEFAULT_SECTION_RATIOS });
+          setSectionColors(loadedConfig?.section_colors ?? DEFAULT_COLORS);
+
+          setModo('repeticao');
+          setRepeticoesStr('1');
+          setGomosStr(String(moldResponse.data.quantidade_gomos));
+          setLastEdited('repeticoes');
+        });
       })
       .catch((err) => {
         if (!cancelled) {
@@ -158,8 +192,13 @@ export function PlotterRiscadoPage({ moldId, moldHint, onBackToGallery }: Plotte
    * cone/tronco-de-cone, o mesmo principio de abrir um chapeu de
    * aniversario numa folha plana).
    */
+  const profile = useMemo(() => {
+    if (!mold) return null;
+    return buildMoldProfile(mold.pontos, sectionRatios, tacoConfigs);
+  }, [mold, sectionRatios, tacoConfigs]);
+
   const preview = useMemo(() => {
-    if (!coneModel || gomosNoLeque <= 0) {
+    if (!coneModel || gomosNoLeque <= 0 || !profile) {
       return null;
     }
 
@@ -178,14 +217,14 @@ export function PlotterRiscadoPage({ moldId, moldHint, onBackToGallery }: Plotte
     const seamY = apiceYBico + coneModel.bico.raioTotalCm;
     const apiceYBoca = seamY + coneModel.boca.raioTotalCm;
 
-    const bicoFan = buildConeFan(coneModel.bico, gomosNoLeque, false, centerX, apiceYBico);
-    const bocaFan = buildConeFan(coneModel.boca, gomosNoLeque, true, centerX, apiceYBoca);
+    const bicoFan = buildConeFan(coneModel.bico, gomosNoLeque, false, centerX, apiceYBico, profile, tacoConfigs, true);
+    const bocaFan = buildConeFan(coneModel.boca, gomosNoLeque, true, centerX, apiceYBoca, profile, tacoConfigs, false);
 
     const viewW = padSide * 2 + larguraEstimadaCm;
     const viewH = apiceYBoca + padOuter;
 
     return { bicoFan, bocaFan, seamY, viewW, viewH };
-  }, [coneModel, gomosNoLeque]);
+  }, [coneModel, gomosNoLeque, profile, tacoConfigs]);
 
   function handleDownloadPdf() {
     if (!mold || calc.error || calc.desenhosUnicos <= 0) return;
@@ -200,6 +239,9 @@ export function PlotterRiscadoPage({ moldId, moldHint, onBackToGallery }: Plotte
         repeticoes: calc.repeticoes,
         desenhosUnicos: calc.desenhosUnicos,
         pontos: mold.pontos,
+        tacoConfigs,
+        sectionRatios,
+        sectionColors,
       });
       downloadBlob(blob, `${slugifyFilename(mold.nome)}-risco.pdf`);
     } catch (err) {
@@ -384,15 +426,46 @@ export function PlotterRiscadoPage({ moldId, moldHint, onBackToGallery }: Plotte
                 role="img"
                 aria-label="Cone do bico e cone da boca planificados, com as linhas de cada gomo"
               >
-                <path d={pointsToClosedPathD(preview.bicoFan.outlinePoints)} fill="#0f1726" stroke="#77e6f2" strokeWidth={Math.max(preview.viewW * 0.004, 0.4)} />
-                <path d={pointsToClosedPathD(preview.bocaFan.outlinePoints)} fill="#0f1726" stroke="#77e6f2" strokeWidth={Math.max(preview.viewW * 0.004, 0.4)} />
+                {/* Background outline */}
+                <path d={pointsToClosedPathD(preview.bicoFan.outlinePoints)} fill="#0f1726" stroke="none" />
+                <path d={pointsToClosedPathD(preview.bocaFan.outlinePoints)} fill="#0f1726" stroke="none" />
+
+                {/* 1. Taco Fills */}
+                {preview.bicoFan.tacoFills.map((fill, i) => (
+                  <path key={`bico-fill-${i}`} d={pointsToClosedPathD(fill.points)} fill={fill.color} stroke="none" />
+                ))}
+                {preview.bocaFan.tacoFills.map((fill, i) => (
+                  <path key={`boca-fill-${i}`} d={pointsToClosedPathD(fill.points)} fill={fill.color} stroke="none" />
+                ))}
+
+                {/* 2. Gomo Outlines */}
+                <path d={pointsToClosedPathD(preview.bicoFan.outlinePoints)} fill="none" stroke="#77e6f2" strokeWidth={Math.max(preview.viewW * 0.004, 0.4)} />
+                <path d={pointsToClosedPathD(preview.bocaFan.outlinePoints)} fill="none" stroke="#77e6f2" strokeWidth={Math.max(preview.viewW * 0.004, 0.4)} />
+
+                {/* 3. Horizontal Taco Lines */}
+                {preview.bicoFan.horizontalTacoLines.map((pts, i) => (
+                  <polyline key={`bico-taco-h-${i}`} points={pointsToPolylineAttr(pts)} fill="none" stroke="#101b2b" opacity={0.5} strokeWidth={Math.max(preview.viewW * 0.0018, 0.15)} />
+                ))}
+                {preview.bocaFan.horizontalTacoLines.map((pts, i) => (
+                  <polyline key={`boca-taco-h-${i}`} points={pointsToPolylineAttr(pts)} fill="none" stroke="#101b2b" opacity={0.5} strokeWidth={Math.max(preview.viewW * 0.0018, 0.15)} />
+                ))}
+
+                {/* 4. Vertical Taco Lines */}
+                {preview.bicoFan.verticalTacoLines.map((pts, i) => (
+                  <polyline key={`bico-taco-v-${i}`} points={pointsToPolylineAttr(pts)} fill="none" stroke="#101b2b" opacity={0.5} strokeWidth={Math.max(preview.viewW * 0.0018, 0.15)} />
+                ))}
+                {preview.bocaFan.verticalTacoLines.map((pts, i) => (
+                  <polyline key={`boca-taco-v-${i}`} points={pointsToPolylineAttr(pts)} fill="none" stroke="#101b2b" opacity={0.5} strokeWidth={Math.max(preview.viewW * 0.0018, 0.15)} />
+                ))}
+
+                {/* 5. Gomo Divisoria Lines */}
                 {preview.bicoFan.divisoriasPoints.map((pts, i) => (
                   <polyline
                     key={`bico-div-${i}`}
                     points={pointsToPolylineAttr(pts)}
                     fill="none"
-                    stroke="#3a4d6b"
-                    strokeWidth={Math.max(preview.viewW * 0.0025, 0.2)}
+                    stroke="#101b2b"
+                    strokeWidth={Math.max(preview.viewW * 0.003, 0.25)}
                   />
                 ))}
                 {preview.bocaFan.divisoriasPoints.map((pts, i) => (
@@ -400,8 +473,8 @@ export function PlotterRiscadoPage({ moldId, moldHint, onBackToGallery }: Plotte
                     key={`boca-div-${i}`}
                     points={pointsToPolylineAttr(pts)}
                     fill="none"
-                    stroke="#3a4d6b"
-                    strokeWidth={Math.max(preview.viewW * 0.0025, 0.2)}
+                    stroke="#101b2b"
+                    strokeWidth={Math.max(preview.viewW * 0.003, 0.25)}
                   />
                 ))}
                 <line

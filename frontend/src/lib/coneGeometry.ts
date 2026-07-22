@@ -1,4 +1,13 @@
-import { buildProfilePoints, type ProfilePoint } from './moldGeometry';
+import {
+  buildProfilePoints,
+  type ProfilePoint,
+  type MoldProfile,
+  type MoldSection,
+  type SectionPartition,
+  type SectionTacoConfigMap,
+  type FlatTacoConfig,
+  expandSectionPartitions,
+} from './moldGeometry';
 import type { MoldPoint } from '../types';
 
 /**
@@ -96,6 +105,11 @@ export function anguloPorGomo(slice: ConeSlice): number {
 
 export type Pt = [number, number];
 
+export interface ConeFanTacoFill {
+  points: Pt[];
+  color: string;
+}
+
 export interface ConeFan {
   slices: ConeSlice[];
   raioTotalCm: number;
@@ -103,6 +117,10 @@ export interface ConeFan {
   outlinePoints: Pt[];
   /** Uma polyline (lista de pontos, apice ate a borda) por linha divisoria entre o gomo k e k+1. */
   divisoriasPoints: Pt[][];
+  
+  tacoFills: ConeFanTacoFill[];
+  horizontalTacoLines: Pt[][];
+  verticalTacoLines: Pt[][];
 }
 
 /** SVG `<path>` `d=` fechado a partir de pontos crus. */
@@ -128,7 +146,10 @@ export function buildConeFan(
   numGomos: number,
   flip: boolean,
   apiceX: number,
-  apiceY: number
+  apiceY: number,
+  profile?: MoldProfile | null,
+  tacoConfigs?: SectionTacoConfigMap | null,
+  isBicoDevelopment?: boolean
 ): ConeFan {
   const { slices, raioTotalCm } = development;
 
@@ -149,7 +170,88 @@ export function buildConeFan(
     );
   }
 
-  return { slices, raioTotalCm, outlinePoints, divisoriasPoints };
+  const tacoFills: ConeFanTacoFill[] = [];
+  const horizontalTacoLines: Pt[][] = [];
+  const verticalTacoLines: Pt[][] = [];
+
+  const getArcPoints = (
+    yCm: number,
+    stepsPerGomo = 10
+  ): Pt[] => {
+    const s = interpolateS(development, yCm);
+    const angulo = interpolateAnguloPorGomo(development, yCm);
+    const totalAngle = angulo * numGomos;
+    
+    const pts: Pt[] = [];
+    const totalSteps = Math.max(2, numGomos * stepsPerGomo);
+    for (let i = 0; i <= totalSteps; i += 1) {
+      const t = i / totalSteps;
+      const ang = -totalAngle / 2 + t * totalAngle;
+      pts.push(point(s, ang));
+    }
+    return pts;
+  };
+
+  const getVerticalLinePoints = (
+    inicioCm: number,
+    fimCm: number,
+    frac: number,
+    steps = 5
+  ): Pt[] => {
+    const pts: Pt[] = [];
+    for (let i = 0; i <= steps; i += 1) {
+      const t = i / steps;
+      const yCm = inicioCm + t * (fimCm - inicioCm);
+      const s = interpolateS(development, yCm);
+      const angulo = interpolateAnguloPorGomo(development, yCm);
+      const totalAngle = angulo * numGomos;
+      const ang = -totalAngle / 2 + frac * totalAngle;
+      pts.push(point(s, ang));
+    }
+    return pts;
+  };
+
+  if (profile && tacoConfigs && isBicoDevelopment !== undefined) {
+    const bands = getBandsForDevelopment(profile, tacoConfigs, isBicoDevelopment);
+    for (const band of bands) {
+      // 1. Taco Fills
+      const bottomArc = getArcPoints(band.inicioCm);
+      const topArc = getArcPoints(band.fimCm);
+      const points = [...bottomArc, ...[...topArc].reverse()];
+      const color = band.partition.cor || band.cor;
+      tacoFills.push({ points, color });
+
+      // 2. Horizontal Taco Lines
+      const subindo = band.partition.tacosSubindo ?? 10;
+      for (let k = 1; k < subindo; k += 1) {
+        const yCm = band.inicioCm + k * band.partition.alturaTacoCm;
+        if (yCm < band.fimCm - 0.05) {
+          const linePts = getArcPoints(yCm);
+          horizontalTacoLines.push(linePts);
+        }
+      }
+
+      // 3. Vertical Taco Lines
+      const tpg = band.partition.tacosPorGomo;
+      for (let k = 0; k < numGomos; k += 1) {
+        for (let j = 1; j < tpg; j += 1) {
+          const frac = (k + j / tpg) / numGomos;
+          const linePts = getVerticalLinePoints(band.inicioCm, band.fimCm, frac);
+          verticalTacoLines.push(linePts);
+        }
+      }
+    }
+  }
+
+  return {
+    slices,
+    raioTotalCm,
+    outlinePoints,
+    divisoriasPoints,
+    tacoFills,
+    horizontalTacoLines,
+    verticalTacoLines,
+  };
 }
 
 export interface BalaoConeModel {
@@ -175,4 +277,101 @@ export function buildBalaoConeModel(pontos: MoldPoint[], quantidadeGomos: number
     boca: developCone(bocaPontos, quantidadeGomos),
     larguraNoEncontroCm: points[splitIndex].halfWidthCm * 2,
   };
+}
+
+export function interpolateS(development: ConeDevelopment, yCm: number): number {
+  const { slices } = development;
+  if (slices.length === 0) return 0;
+  
+  const first = slices[0];
+  const last = slices[slices.length - 1];
+  
+  const minY = Math.min(first.yCm, last.yCm);
+  const maxY = Math.max(first.yCm, last.yCm);
+  if (yCm <= minY) {
+    const minSlice = slices.find((sl) => sl.yCm === minY) || first;
+    return minSlice.s;
+  }
+  if (yCm >= maxY) {
+    const maxSlice = slices.find((sl) => sl.yCm === maxY) || last;
+    return maxSlice.s;
+  }
+  
+  for (let i = 1; i < slices.length; i += 1) {
+    const prev = slices[i - 1];
+    const curr = slices[i];
+    const sMinY = Math.min(prev.yCm, curr.yCm);
+    const sMaxY = Math.max(prev.yCm, curr.yCm);
+    if (yCm >= sMinY && yCm <= sMaxY) {
+      const span = curr.yCm - prev.yCm;
+      if (Math.abs(span) <= 0.0001) {
+        return curr.s;
+      }
+      const t = (yCm - prev.yCm) / span;
+      return prev.s + (curr.s - prev.s) * t;
+    }
+  }
+  return last.s;
+}
+
+export function interpolateAnguloPorGomo(development: ConeDevelopment, yCm: number): number {
+  const s = interpolateS(development, yCm);
+  if (s <= 0.0001) return 0;
+  
+  const { slices } = development;
+  const first = slices[0];
+  const last = slices[slices.length - 1];
+  const minY = Math.min(first.yCm, last.yCm);
+  const maxY = Math.max(first.yCm, last.yCm);
+  
+  let larguraCm = 0;
+  if (yCm <= minY) {
+    larguraCm = (slices.find((sl) => sl.yCm === minY) || first).larguraCm;
+  } else if (yCm >= maxY) {
+    larguraCm = (slices.find((sl) => sl.yCm === maxY) || last).larguraCm;
+  } else {
+    for (let i = 1; i < slices.length; i += 1) {
+      const prev = slices[i - 1];
+      const curr = slices[i];
+      const sMinY = Math.min(prev.yCm, curr.yCm);
+      const sMaxY = Math.max(prev.yCm, curr.yCm);
+      if (yCm >= sMinY && yCm <= sMaxY) {
+        const span = curr.yCm - prev.yCm;
+        if (Math.abs(span) <= 0.0001) {
+          larguraCm = curr.larguraCm;
+        } else {
+          const t = (yCm - prev.yCm) / span;
+          larguraCm = prev.larguraCm + (curr.larguraCm - prev.larguraCm) * t;
+        }
+        break;
+      }
+    }
+  }
+  return larguraCm / s;
+}
+
+export function getBandsForDevelopment(
+  profile: MoldProfile,
+  tacoConfigs: SectionTacoConfigMap,
+  isBicoDevelopment: boolean
+): Array<MoldSection & { partition: SectionPartition; flatConfig: FlatTacoConfig }> {
+  const allBands: Array<MoldSection & { partition: SectionPartition; flatConfig: FlatTacoConfig }> = [];
+  
+  const ordem: Array<MoldSection['id']> = ['bico', 'bojo', 'boca'];
+  for (const id of ordem) {
+    const secao = profile.secoes.find((s) => s.id === id);
+    const cfg = tacoConfigs[id];
+    if (secao && cfg) {
+      allBands.push(...expandSectionPartitions(secao, cfg));
+    }
+  }
+  
+  const splitIndex = indiceMaisLargo(profile.points);
+  const seamY = profile.points[splitIndex].yCm;
+  
+  if (isBicoDevelopment) {
+    return allBands.filter((band) => band.fimCm > seamY || Math.abs(band.fimCm - seamY) <= 0.01);
+  } else {
+    return allBands.filter((band) => band.inicioCm < seamY || Math.abs(band.inicioCm - seamY) <= 0.01);
+  }
 }
