@@ -544,7 +544,7 @@ export function buildMoldPdf(options: MoldPdfOptions): Blob {
     options.plotterConfig.section_ratios,
     options.plotterConfig.section_colors
   );
-  const fullProfile = showWhole ? buildMoldProfile(options.pontos, options.plotterConfig.section_ratios) : null;
+  const fullProfile = showWhole ? buildMoldProfile(options.pontos, options.plotterConfig.section_ratios, options.plotterConfig.taco_configs) : null;
   const totals = computeSectionTacoTotals(
     options.pontos,
     options.plotterConfig.taco_configs,

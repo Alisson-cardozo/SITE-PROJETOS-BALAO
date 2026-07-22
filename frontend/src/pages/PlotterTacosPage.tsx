@@ -209,8 +209,8 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
   }
 
   const profile = useMemo(
-    () => (mold ? buildMoldProfile(mold.pontos, sectionRatios) : null),
-    [mold, sectionRatios]
+    () => (mold ? buildMoldProfile(mold.pontos, sectionRatios, tacoConfigs) : null),
+    [mold, sectionRatios, tacoConfigs]
   );
 
   const sectionStats = useMemo(() => {
@@ -259,14 +259,51 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
     partitionId: string,
     nextSubindo: number
   ) {
-    setTacoConfigs((prev) => ({
-      ...prev,
-      [sectionId]: {
-        partitions: prev[sectionId].partitions.map((p) =>
+    setTacoConfigs((prev) => {
+      const currentSectionConfig = prev[sectionId];
+      const partIndex = currentSectionConfig.partitions.findIndex((p) => p.id === partitionId);
+      if (partIndex < 0) {
+        return prev;
+      }
+      const prevSubindo = currentSectionConfig.partitions[partIndex].tacosSubindo ?? 0;
+      const diff = nextSubindo - prevSubindo;
+
+      const nextConfigs = { ...prev };
+      nextConfigs[sectionId] = {
+        ...nextConfigs[sectionId],
+        partitions: nextConfigs[sectionId].partitions.map((p) =>
           p.id === partitionId ? { ...p, tacosSubindo: nextSubindo } : p
         ),
-      },
-    }));
+      };
+
+      if (sectionId === 'boca') {
+        const bojoParts = nextConfigs['bojo'].partitions;
+        if (bojoParts.length > 0) {
+          const firstBojo = bojoParts[0];
+          const newBojoSubindo = Math.max(1, (firstBojo.tacosSubindo ?? 1) - diff);
+          nextConfigs['bojo'] = {
+            ...nextConfigs['bojo'],
+            partitions: nextConfigs['bojo'].partitions.map((p, idx) =>
+              idx === 0 ? { ...p, tacosSubindo: newBojoSubindo } : p
+            ),
+          };
+        }
+      } else if (sectionId === 'bojo') {
+        const bicoParts = nextConfigs['bico'].partitions;
+        if (bicoParts.length > 0) {
+          const firstBico = bicoParts[0];
+          const newBicoSubindo = Math.max(1, (firstBico.tacosSubindo ?? 1) - diff);
+          nextConfigs['bico'] = {
+            ...nextConfigs['bico'],
+            partitions: nextConfigs['bico'].partitions.map((p, idx) =>
+              idx === 0 ? { ...p, tacosSubindo: newBicoSubindo } : p
+            ),
+          };
+        }
+      }
+
+      return nextConfigs;
+    });
   }
 
   function updatePartitionAlturaTaco(

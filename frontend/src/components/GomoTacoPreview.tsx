@@ -54,9 +54,10 @@ export function GomoTacoPreview({
   sectionRatios = DEFAULT_SECTION_RATIOS,
   compact = false,
 }: GomoTacoPreviewProps) {
+  const resolvedTacoConfigs = tacoConfigs ?? createDefaultTacoConfigs(1);
   const profile = useMemo(
-    () => buildMoldProfile(pontos, sectionRatios),
-    [pontos, sectionRatios]
+    () => buildMoldProfile(pontos, sectionRatios, resolvedTacoConfigs),
+    [pontos, sectionRatios, resolvedTacoConfigs]
   );
   const [zoom, setZoom] = useState(FIT_ZOOM);
   const [isPanning, setIsPanning] = useState(false);
@@ -76,7 +77,6 @@ export function GomoTacoPreview({
     scrollLeft: 0,
     scrollTop: 0,
   });
-  const resolvedTacoConfigs = tacoConfigs ?? createDefaultTacoConfigs(1);
 
   useEffect(() => {
     const el = stageRef.current;

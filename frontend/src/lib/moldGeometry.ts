@@ -145,13 +145,32 @@ export function interpolateHalfWidth(yCm: number, profile: ProfilePoint[]): numb
 
 export function buildMoldSections(
   alturaTotalCm: number,
-  ratios: SectionRatios = DEFAULT_SECTION_RATIOS
+  ratios: SectionRatios = DEFAULT_SECTION_RATIOS,
+  tacoConfigs?: SectionTacoConfigMap
 ): MoldSection[] {
   const h = Math.max(0, alturaTotalCm);
   const r = normalizeSectionRatios(ratios);
-  const bocaAltura = round1(h * r.boca);
-  const bicoAltura = round1(h * r.bico);
-  const bojoAltura = round1(Math.max(0, h - bocaAltura - bicoAltura));
+  
+  let bocaAltura = round1(h * r.boca);
+  let bicoAltura = round1(h * r.bico);
+  let bojoAltura = round1(Math.max(0, h - bocaAltura - bicoAltura));
+
+  if (tacoConfigs) {
+    const bocaCfg = tacoConfigs['boca'];
+    const bojoCfg = tacoConfigs['bojo'];
+    const hasBocaTacos = bocaCfg && bocaCfg.partitions.length > 0;
+    const hasBojoTacos = bojoCfg && bojoCfg.partitions.length > 0;
+    
+    if (hasBocaTacos || hasBojoTacos) {
+      if (hasBocaTacos) {
+        bocaAltura = round1(bocaCfg.partitions.reduce((sum, p) => sum + (p.tacosSubindo ?? 10) * p.alturaTacoCm, 0));
+      }
+      if (hasBojoTacos) {
+        bojoAltura = round1(bojoCfg.partitions.reduce((sum, p) => sum + (p.tacosSubindo ?? 20) * p.alturaTacoCm, 0));
+      }
+      bicoAltura = round1(Math.max(0, h - bocaAltura - bojoAltura));
+    }
+  }
 
   const bocaFim = bocaAltura;
   const bojoFim = bocaFim + bojoAltura;
@@ -189,7 +208,8 @@ export function buildMoldSections(
 
 export function buildMoldProfile(
   pontos: MoldPoint[],
-  ratios: SectionRatios = DEFAULT_SECTION_RATIOS
+  ratios: SectionRatios = DEFAULT_SECTION_RATIOS,
+  tacoConfigs?: SectionTacoConfigMap
 ): MoldProfile | null {
   const points = buildProfilePoints(pontos);
   if (points.length < 2) {
@@ -209,7 +229,7 @@ export function buildMoldProfile(
     alturaTotalCm: round1(alturaTotalCm),
     larguraMaximaCm: round1(maxHalf * 2),
     larguraBocaCm: round1(bocaHalf * 2),
-    secoes: buildMoldSections(alturaTotalCm, ratios),
+    secoes: buildMoldSections(alturaTotalCm, ratios, tacoConfigs),
   };
 }
 
@@ -1012,7 +1032,7 @@ export function buildSeparatedPieces(
   sectionRatios: SectionRatios,
   sectionColors?: Partial<Record<MoldSection['id'], string>>
 ): SeparatedPiece[] {
-  const profile = buildMoldProfile(pontos, sectionRatios);
+  const profile = buildMoldProfile(pontos, sectionRatios, tacoConfigs);
   if (!profile) {
     return [];
   }
@@ -1097,7 +1117,7 @@ export function computeSectionTacoTotals(
   tacoConfigs: SectionTacoConfigMap,
   sectionRatios: SectionRatios
 ): Record<MoldSection['id'], number> | null {
-  const profile = buildMoldProfile(pontos, sectionRatios);
+  const profile = buildMoldProfile(pontos, sectionRatios, tacoConfigs);
   if (!profile) {
     return null;
   }
