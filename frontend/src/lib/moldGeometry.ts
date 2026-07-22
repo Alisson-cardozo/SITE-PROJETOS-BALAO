@@ -482,30 +482,65 @@ export function expandSectionPartitions(
     return [];
   }
   const n = parts.length;
+  const weights = parts.map((p) => Math.max(0.01, Number(p.peso) || 1));
+  const weightSum = weights.reduce((s, w) => s + w, 0) || 1;
 
-  let yBottom = secao.inicioCm;
-  return parts.map((partition, index) => {
-    const tacosSubindo = partition.tacosSubindo ?? 10;
-    const alturaCm = round1(tacosSubindo * partition.alturaTacoCm);
-    const inicioCm = round1(yBottom);
-    const fimCm = round1(Math.min(secao.fimCm, yBottom + alturaCm));
-    yBottom = fimCm;
+  const hasManualTacos = parts.some((p) => p.tacosSubindo !== undefined);
 
-    return {
-      ...secao,
-      nome: n > 1 ? `${secao.nome} ${index + 1}` : secao.nome,
-      cor: partition.cor || secao.cor,
-      inicioCm,
-      fimCm,
-      alturaCm: round1(Math.max(0, fimCm - inicioCm)),
-      partition,
-      flatConfig: {
-        tacosPorGomo: partition.tacosPorGomo,
-        alturaTacoCm: partition.alturaTacoCm,
-        bainhaCm: BAINHA_FINA_CM,
-      },
-    };
-  });
+  if (hasManualTacos) {
+    let yBottom = secao.inicioCm;
+    return parts.map((partition, index) => {
+      const tacosSubindo = partition.tacosSubindo ?? 10;
+      const alturaCm = round1(tacosSubindo * partition.alturaTacoCm);
+      const inicioCm = round1(yBottom);
+      const fimCm = round1(Math.min(secao.fimCm, yBottom + alturaCm));
+      yBottom = fimCm;
+
+      return {
+        ...secao,
+        nome: n > 1 ? `${secao.nome} ${index + 1}` : secao.nome,
+        cor: partition.cor || secao.cor,
+        inicioCm,
+        fimCm,
+        alturaCm: round1(Math.max(0, fimCm - inicioCm)),
+        partition,
+        flatConfig: {
+          tacosPorGomo: partition.tacosPorGomo,
+          alturaTacoCm: partition.alturaTacoCm,
+          bainhaCm: BAINHA_FINA_CM,
+        },
+      };
+    });
+  } else {
+    let yTop = secao.fimCm;
+    return parts.map((partition, index) => {
+      const isLast = index === n - 1;
+      const frac = weights[index] / weightSum;
+      const alturaRaw = isLast ? yTop - secao.inicioCm : secao.alturaCm * frac;
+      const alturaCm = round1(Math.max(0, isLast ? yTop - secao.inicioCm : alturaRaw));
+      const fimCm = round1(yTop);
+      const inicioCm = round1(isLast ? secao.inicioCm : yTop - alturaCm);
+      yTop = inicioCm;
+
+      const calculatedSubindo = Math.max(1, Math.floor(alturaCm / partition.alturaTacoCm));
+      const partitionWithSubindo = { ...partition, tacosSubindo: calculatedSubindo };
+
+      return {
+        ...secao,
+        nome: n > 1 ? `${secao.nome} ${index + 1}` : secao.nome,
+        cor: partition.cor || secao.cor,
+        inicioCm,
+        fimCm,
+        alturaCm: round1(Math.max(0, fimCm - inicioCm)),
+        partition: partitionWithSubindo,
+        flatConfig: {
+          tacosPorGomo: partition.tacosPorGomo,
+          alturaTacoCm: partition.alturaTacoCm,
+          bainhaCm: BAINHA_FINA_CM,
+        },
+      };
+    });
+  }
 }
 
 /**

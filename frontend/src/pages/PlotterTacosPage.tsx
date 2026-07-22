@@ -110,7 +110,30 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
         const saved = projectResponse?.data.plotter_config ?? null;
         if (saved) {
           setSectionColors({ ...DEFAULT_COLORS, ...saved.section_colors });
-          setTacoConfigs(saved.taco_configs);
+          
+          const loadedConfigs = JSON.parse(JSON.stringify(saved.taco_configs));
+          const tempProfile = buildMoldProfile(moldResponse.data.pontos, saved.section_ratios || DEFAULT_SECTION_RATIOS);
+          if (tempProfile) {
+            for (const secao of tempProfile.secoes) {
+              const cfg = loadedConfigs[secao.id];
+              if (cfg && cfg.partitions) {
+                const parts = cfg.partitions;
+                const weights = parts.map((p: any) => Math.max(0.01, Number(p.peso) || 1));
+                const weightSum = weights.reduce((s: number, w: number) => s + w, 0) || 1;
+                cfg.partitions = parts.map((part: any, index: number) => {
+                  if (part.tacosSubindo === undefined) {
+                    const frac = weights[index] / weightSum;
+                    const bandHeight = secao.alturaCm * frac;
+                    const calculated = Math.max(1, Math.floor(bandHeight / part.alturaTacoCm));
+                    return { ...part, tacosSubindo: calculated };
+                  }
+                  return part;
+                });
+              }
+            }
+          }
+
+          setTacoConfigs(loadedConfigs);
           setSectionRatios(saved.section_ratios);
         } else if (isBlank) {
           setSectionColors(DEFAULT_COLORS);
