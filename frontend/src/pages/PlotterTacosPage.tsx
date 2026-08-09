@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Loader2, Plus, Printer, Save, Trash2 } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronUp, ChevronsDown, ChevronsUp, Loader2, Plus, Printer, Save, Trash2 } from 'lucide-react';
 import { GomoTacoPreview } from '../components/GomoTacoPreview';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -62,7 +62,7 @@ function formatCm(value: number): string {
 }
 
 export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank = false, onBackToGallery }: PlotterTacosPageProps) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [mold, setMold] = useState<MoldDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,6 +79,97 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
    * a apontar pro projeto recem-criado — assim salvar de novo na MESMA sessao
    * atualiza, em vez de criar mais um projeto a cada clique. */
   const [currentProjectId, setCurrentProjectId] = useState<number | null>(projectId);
+
+  /** Controla quais secoes ja foram desbloqueadas no fluxo guiado.
+   * Boca sempre comeca ativa; Bojo e Bico desbloqueiam conforme o usuario avanca. */
+  const [unlockedSections, setUnlockedSections] = useState<Set<MoldSection['id']>>(() => new Set<MoldSection['id']>(['boca']));
+
+  /** Controle de cards minimizados por secao (Boca, Bojo, Bico) */
+  const [collapsedSections, setCollapsedSections] = useState<Record<MoldSection['id'], boolean>>({
+    boca: false,
+    bojo: false,
+    bico: false,
+  });
+
+  /** Controle de cards minimizados por reparticao individual */
+  const [collapsedPartitions, setCollapsedPartitions] = useState<Record<string, boolean>>({});
+
+  const toggleSectionCollapse = (sectionId: MoldSection['id']) => {
+    setCollapsedSections((prev) => ({ ...prev, [sectionId]: !prev[sectionId] }));
+  };
+
+  const togglePartitionCollapse = (partitionId: string) => {
+    setCollapsedPartitions((prev) => ({ ...prev, [partitionId]: !prev[partitionId] }));
+  };
+
+  const handleCollapseAllSections = () => {
+    setCollapsedSections({ boca: true, bojo: true, bico: true });
+  };
+
+  const handleExpandAllSections = () => {
+    setCollapsedSections({ boca: false, bojo: false, bico: false });
+  };
+
+  /** Aviso temporario por reparticao quando um valor digitado e ajustado
+   * automaticamente (ex.: Bico sem espaco pro tanto de taco pedido). */
+  const [clampWarnings, setClampWarnings] = useState<Record<string, string>>({});
+
+  // Estados do Mecanismo de Rascunho
+  const [hasDraftLoaded, setHasDraftLoaded] = useState(false);
+  const [reloadTrigger, setReloadTrigger] = useState(0);
+
+  const draftKey = useMemo(() => {
+    if (!user || moldId == null) return '';
+    return `sistema-novo:draft:user-${user.id}:mold-${moldId}:project-${currentProjectId || 'new'}`;
+  }, [user, moldId, currentProjectId]);
+
+  // Hook de Auto-salvamento silencioso
+  useEffect(() => {
+    if (loading || !mold || !draftKey) return;
+    try {
+      const draft = {
+        sectionColors,
+        sectionRatios,
+        tacoConfigs,
+        unlockedSectionsArray: Array.from(unlockedSections)
+      };
+      window.localStorage.setItem(draftKey, JSON.stringify(draft));
+    } catch {}
+  }, [sectionColors, sectionRatios, tacoConfigs, unlockedSections, loading, mold, draftKey]);
+
+  const handleDiscardDraft = () => {
+    if (draftKey) {
+      try {
+        window.localStorage.removeItem(draftKey);
+      } catch {}
+    }
+    setHasDraftLoaded(false);
+    setSaveSuccess(null);
+    setReloadTrigger((prev) => prev + 1); // Dispara carregamento limpo
+  };
+
+  const handleBack = () => {
+    if (draftKey) {
+      try {
+        window.localStorage.removeItem(draftKey);
+      } catch {}
+    }
+    onBackToGallery?.();
+  };
+
+  function flashClampWarning(partitionId: string, message: string) {
+    setClampWarnings((prev) => ({ ...prev, [partitionId]: message }));
+    window.setTimeout(() => {
+      setClampWarnings((prev) => {
+        if (!(partitionId in prev)) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[partitionId];
+        return next;
+      });
+    }, 5000);
+  }
 
   useEffect(() => {
     setCurrentProjectId(projectId);
@@ -107,6 +198,24 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
           return;
         }
         setMold(moldResponse.data);
+
+        // Tentar carregar rascunho local antes dos dados padrão/banco
+        const savedDraftRaw = draftKey ? window.localStorage.getItem(draftKey) : null;
+        if (savedDraftRaw) {
+          try {
+            const draft = JSON.parse(savedDraftRaw);
+            setSectionColors(draft.sectionColors);
+            setSectionRatios(draft.sectionRatios);
+            setTacoConfigs(draft.tacoConfigs);
+            setUnlockedSections(new Set(draft.unlockedSectionsArray || ['boca']));
+            setHasDraftLoaded(true);
+            setSaveSuccess('Rascunho não salvo recuperado do seu navegador.');
+            return; // Nao processa o resto para manter o rascunho
+          } catch {
+            // Ignora erro e continua
+          }
+        }
+
         const saved = projectResponse?.data.plotter_config ?? null;
         if (saved) {
           setSectionColors({ ...DEFAULT_COLORS, ...saved.section_colors });
@@ -135,14 +244,22 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
 
           setTacoConfigs(loadedConfigs);
           setSectionRatios(saved.section_ratios);
+          // Desbloqueia automaticamente as secoes que ja tem particoes salvas
+          const unlocked = new Set<MoldSection['id']>(['boca']);
+          if ((loadedConfigs.bojo?.partitions?.length ?? 0) > 0) unlocked.add('bojo');
+          if ((loadedConfigs.bico?.partitions?.length ?? 0) > 0) unlocked.add('bico');
+          setUnlockedSections(unlocked);
         } else if (isBlank) {
           setSectionColors(DEFAULT_COLORS);
+          // Inicia com 1 reparticao padrao ja na Boca para guiar o fluxo
+          const bocaInicial = createPartition(4, 5, 10, PART_FILL_COLORS[4], PARTITION_DIVISION_COLORS[0]);
           setTacoConfigs({
-            boca: { partitions: [] },
+            boca: { partitions: [bocaInicial] },
             bojo: { partitions: [] },
             bico: { partitions: [] },
           });
           setSectionRatios({ ...DEFAULT_SECTION_RATIOS });
+          setUnlockedSections(new Set<MoldSection['id']>(['boca']));
         } else {
           setSectionColors(DEFAULT_COLORS);
           const defaultConfigs = createDefaultTacoConfigs(moldResponse.data.bainha_cm || 1);
@@ -175,7 +292,7 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
     return () => {
       cancelled = true;
     };
-  }, [moldId, projectId, token]);
+  }, [moldId, projectId, token, reloadTrigger, draftKey]);
 
   async function handleSaveConfig() {
     if (!token || moldId == null || saving) {
@@ -201,6 +318,15 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
         setCurrentProjectId(response.data.id);
         setSaveSuccess(`Novo projeto "${response.data.display_nome}" salvo em Meus Projetos.`);
       }
+
+      // Limpa o rascunho temporario local apos salvar com sucesso
+      if (draftKey) {
+        try {
+          window.localStorage.removeItem(draftKey);
+        } catch {}
+      }
+      setHasDraftLoaded(false);
+
     } catch (err) {
       setSaveError(err instanceof ApiError ? err.message : 'Nao foi possivel salvar a configuracao.');
     } finally {
@@ -213,10 +339,45 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
     [mold, sectionRatios, tacoConfigs]
   );
 
+  /**
+   * Boca e Bojo definem a propria altura pela soma dos proprios tacos (sem
+   * teto fixo pra eles mesmos). O Bico e o que SOBRA do molde (altura total -
+   * Boca - Bojo) — entao e o unico que pode "estourar": se os tacos do Bico
+   * somarem mais cm do que sobrou, o molde passa do tamanho real.
+   */
+  function bicoBudgetCm(configs: SectionTacoConfigMap): number {
+    if (!profile) {
+      return Infinity;
+    }
+    const bocaAltura = configs.boca.partitions.reduce(
+      (sum, p) => sum + (p.tacosSubindo ?? 0) * p.alturaTacoCm,
+      0
+    );
+    const bojoAltura = configs.bojo.partitions.reduce(
+      (sum, p) => sum + (p.tacosSubindo ?? 0) * p.alturaTacoCm,
+      0
+    );
+    return Math.max(0, profile.alturaTotalCm - bocaAltura - bojoAltura);
+  }
+
+  /** Quanto (cm) essa reparticao do Bico ainda pode crescer sem passar do
+   * restante do molde — orcamento do Bico menos o que as OUTRAS reparticoes
+   * do Bico ja ocupam. */
+  function maxHeightForBicoPartition(configs: SectionTacoConfigMap, partitionId: string): number {
+    const othersHeight = configs.bico.partitions.reduce(
+      (sum, p) => (p.id === partitionId ? sum : sum + (p.tacosSubindo ?? 0) * p.alturaTacoCm),
+      0
+    );
+    return Math.max(0, bicoBudgetCm(configs) - othersHeight);
+  }
+
   const sectionStats = useMemo(() => {
     if (!profile) {
       return null;
     }
+    // Ordem visual: Bico no topo -> Bojo -> Boca embaixo (espelha a ponta/base do
+    // molde no preview). Uma secao recem-desbloqueada some sempre ACIMA das
+    // anteriores, nunca embaixo.
     const ordemMolde: Array<MoldSection['id']> = ['bico', 'bojo', 'boca'];
     return ordemMolde
       .map((id) => profile.secoes.find((secao) => secao.id === id))
@@ -265,14 +426,26 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
       if (partIndex < 0) {
         return prev;
       }
-      const prevSubindo = currentSectionConfig.partitions[partIndex].tacosSubindo ?? 0;
-      const diff = nextSubindo - prevSubindo;
+      const partition = currentSectionConfig.partitions[partIndex];
+
+      // Bico e o que sobra do molde: nao deixa o usuario colocar mais tacos
+      // subindo do que cabe no restante (ex.: falta 1m, taco de 5cm -> maximo
+      // 20 subindo, nunca 300).
+      let clampedSubindo = Math.max(1, Math.floor(nextSubindo) || 1);
+      if (sectionId === 'bico') {
+        const maxHeight = maxHeightForBicoPartition(prev, partitionId);
+        const maxSubindo = Math.max(1, Math.floor(maxHeight / Math.max(1, partition.alturaTacoCm)));
+        clampedSubindo = Math.min(clampedSubindo, maxSubindo);
+      }
+
+      const prevSubindo = partition.tacosSubindo ?? 0;
+      const diff = clampedSubindo - prevSubindo;
 
       const nextConfigs = { ...prev };
       nextConfigs[sectionId] = {
         ...nextConfigs[sectionId],
         partitions: nextConfigs[sectionId].partitions.map((p) =>
-          p.id === partitionId ? { ...p, tacosSubindo: nextSubindo } : p
+          p.id === partitionId ? { ...p, tacosSubindo: clampedSubindo } : p
         ),
       };
 
@@ -311,14 +484,29 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
     partitionId: string,
     nextAltura: number
   ) {
-    setTacoConfigs((prev) => ({
-      ...prev,
-      [sectionId]: {
-        partitions: prev[sectionId].partitions.map((p) =>
-          p.id === partitionId ? { ...p, alturaTacoCm: nextAltura } : p
-        ),
-      },
-    }));
+    setTacoConfigs((prev) => {
+      const partition = prev[sectionId].partitions.find((p) => p.id === partitionId);
+      if (!partition) {
+        return prev;
+      }
+
+      let clampedAltura = Math.max(1, Math.floor(nextAltura) || 1);
+      if (sectionId === 'bico') {
+        const maxHeight = maxHeightForBicoPartition(prev, partitionId);
+        const subindo = Math.max(1, partition.tacosSubindo ?? 1);
+        const maxAltura = Math.max(1, Math.floor(maxHeight / subindo));
+        clampedAltura = Math.min(clampedAltura, maxAltura);
+      }
+
+      return {
+        ...prev,
+        [sectionId]: {
+          partitions: prev[sectionId].partitions.map((p) =>
+            p.id === partitionId ? { ...p, alturaTacoCm: clampedAltura } : p
+          ),
+        },
+      };
+    });
   }
 
   function updatePartitionTacosPorGomo(
@@ -336,7 +524,13 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
     }));
   }
 
-  function addPartition(sectionId: MoldSection['id'], _secaoAlturaCm: number) {
+  /**
+   * Adiciona reparticao nova. Sem `beforePartitionId`, entra no TOPO da secao
+   * (padrao do botao geral). Com `beforePartitionId`, entra imediatamente ACIMA
+   * daquele card especifico (botao "+" de cada card) — permite empilhar a
+   * partir de qualquer ponto, nao so do topo absoluto.
+   */
+  function addPartition(sectionId: MoldSection['id'], _secaoAlturaCm: number, beforePartitionId?: string) {
     setTacoConfigs((prev) => {
       const current = prev[sectionId].partitions;
       if (current.length >= MAX_PARTITIONS) {
@@ -346,17 +540,33 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
       const nextIndex = current.length;
       const corNova = PART_FILL_COLORS[(nextIndex + sectionColorOffset(sectionId)) % PART_FILL_COLORS.length];
       const corDivisao = PARTITION_DIVISION_COLORS[nextIndex % PARTITION_DIVISION_COLORS.length];
-      const created = createPartition(
+      let created = createPartition(
         last?.tacosPorGomo ?? 4,
         last?.alturaTacoCm ?? 5,
         last?.tacosSubindo ?? 10,
         corNova,
         corDivisao
       );
+
+      // Bico: a nova reparticao tambem nao pode nascer maior do que o que
+      // sobrou do molde (as outras reparticoes do Bico ja existentes contam
+      // como ocupadas).
+      if (sectionId === 'bico') {
+        const othersHeight = current.reduce(
+          (sum, p) => sum + (p.tacosSubindo ?? 0) * p.alturaTacoCm,
+          0
+        );
+        const budget = Math.max(0, bicoBudgetCm(prev) - othersHeight);
+        const maxSubindo = Math.max(1, Math.floor(budget / Math.max(1, created.alturaTacoCm)));
+        created = { ...created, tacosSubindo: Math.min(created.tacosSubindo ?? 10, maxSubindo) };
+      }
+
+      const foundAt = beforePartitionId ? current.findIndex((p) => p.id === beforePartitionId) : 0;
+      const insertAt = foundAt < 0 ? 0 : foundAt;
       return {
         ...prev,
         [sectionId]: {
-          partitions: [...current, created],
+          partitions: [...current.slice(0, insertAt), created, ...current.slice(insertAt)],
         },
       };
     });
@@ -378,12 +588,30 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
     });
   }
 
+  /** Desbloqueia uma secao no fluxo guiado e adiciona 1 reparticao padrao se ainda estiver vazia. */
+  function unlockSection(sectionId: MoldSection['id']) {
+    setUnlockedSections((prev) => {
+      const next = new Set(prev);
+      next.add(sectionId);
+      return next;
+    });
+    setTacoConfigs((prev) => {
+      const current = prev[sectionId].partitions;
+      if (current.length > 0) return prev;
+      const offset = sectionColorOffset(sectionId);
+      const corNova = PART_FILL_COLORS[offset % PART_FILL_COLORS.length];
+      const corDivisao = PARTITION_DIVISION_COLORS[0];
+      const created = createPartition(4, 5, 10, corNova, corDivisao);
+      return { ...prev, [sectionId]: { partitions: [created] } };
+    });
+  }
+
   if (moldId == null) {
     return (
       <div className="plotter-empty">
         <div className="plotter-empty-card">
           <Printer size={28} />
-          <h2>Plotter (Moldes Tacos)</h2>
+          <h2>Plotar (Moldes Tacos)</h2>
           <p>
             Selecione um molde na Galeria e clique em <strong>Plotar no Taco</strong> para ver o gomo
             dividido.
@@ -408,7 +636,7 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
     <div className="plotter-page">
       <div className="plotter-toolbar">
         <div className="plotter-toolbar-text">
-          <h2>Plotter — {titleName}</h2>
+          <h2>Plotar — {titleName}</h2>
           <p>
             {titleModel ? `${titleModel} · ` : ''}
             Gomo em escala real · Boca/Bojo/Bico com totais ligados
@@ -427,7 +655,7 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
             </button>
           ) : null}
           {onBackToGallery ? (
-            <button type="button" className="mold-import-button plotter-back-btn" onClick={onBackToGallery}>
+            <button type="button" className="mold-import-button plotter-back-btn" onClick={handleBack}>
               <ArrowLeft size={16} />
               Voltar
             </button>
@@ -437,7 +665,38 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
 
       {error ? <p className="mold-import-error">{error}</p> : null}
       {saveError ? <p className="mold-import-error">{saveError}</p> : null}
-      {saveSuccess ? <p className="mold-form-success">{saveSuccess}</p> : null}
+      {saveSuccess ? (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          background: 'rgba(72,187,120,0.1)',
+          padding: '10px 14px',
+          borderRadius: '8px',
+          border: '1px solid #48bb78',
+          marginBottom: '16px'
+        }}>
+          <p className="mold-form-success" style={{ margin: 0, flex: 1, padding: 0 }}>{saveSuccess}</p>
+          {hasDraftLoaded && (
+            <button
+              type="button"
+              onClick={handleDiscardDraft}
+              style={{
+                background: '#e53e3e',
+                color: '#fff',
+                border: 'none',
+                padding: '4px 10px',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '11px',
+                fontWeight: 600
+              }}
+            >
+              Descartar Rascunho Local
+            </button>
+          )}
+        </div>
+      ) : null}
 
       {loading ? (
         <div className="plotter-loading">
@@ -469,13 +728,37 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
                 sectionColors={sectionColors}
                 tacoConfigs={tacoConfigs}
                 sectionRatios={sectionRatios}
+                bainhaCm={mold.bainha_cm}
+                showDetails
               />
             </div>
           </div>
 
           <aside className="plotter-config-panel">
             <div className="plotter-config-head">
-              <h3>Configuracao dos tacos</h3>
+              <div className="plotter-config-head-top">
+                <h3>Configuracao dos tacos</h3>
+                <div className="plotter-quick-toggles">
+                  <button
+                    type="button"
+                    className="plotter-quick-toggle-btn"
+                    onClick={handleCollapseAllSections}
+                    title="Minimizar todas as seções"
+                  >
+                    <ChevronsUp size={13} />
+                    Minimizar todas
+                  </button>
+                  <button
+                    type="button"
+                    className="plotter-quick-toggle-btn"
+                    onClick={handleExpandAllSections}
+                    title="Expandir todas as seções"
+                  >
+                    <ChevronsDown size={13} />
+                    Expandir todas
+                  </button>
+                </div>
+              </div>
               <p>
                 Menos <strong>tacos por gomo</strong> no bico = grade sobe mais (mais estreito
                 aguenta) e a quantidade <strong>subindo/total sobe</strong>. Totais entre partes
@@ -484,226 +767,431 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
             </div>
 
             {sectionStats.map(({ secao, config, bandStats, totalTacos }) => {
+              // Fluxo guiado: so mostra secoes desbloqueadas
+              if (!unlockedSections.has(secao.id)) return null;
+
               const cor = sectionColors[secao.id] ?? secao.cor;
               const partCount = config.partitions.length;
+              const isSectionCollapsed = Boolean(collapsedSections[secao.id]);
+
+              // Progresso: cm preenchidos pelos tacos vs total da secao
+              const filledCm = config.partitions.reduce(
+                (sum, p) => sum + (p.tacosSubindo ?? 0) * (p.alturaTacoCm ?? 5),
+                0
+              );
+              const progressPct = secao.alturaCm > 0 ? Math.min(100, (filledCm / secao.alturaCm) * 100) : 0;
+
+              // Qual e a proxima secao a desbloquear
+              const nextSection: MoldSection['id'] | null =
+                secao.id === 'boca' ? 'bojo' : secao.id === 'bojo' ? 'bico' : null;
+              const nextLabel = nextSection === 'bojo' ? 'Bojo' : nextSection === 'bico' ? 'Bico' : '';
 
               return (
-                <section key={secao.id} className="plotter-config-card" style={{ borderColor: cor }}>
-                  <header className="plotter-config-card-head">
+                <section
+                  key={secao.id}
+                  className={`plotter-config-card ${isSectionCollapsed ? 'is-collapsed' : ''}`}
+                  style={{ borderColor: cor }}
+                >
+                  <header
+                    className="plotter-config-card-head"
+                    onClick={() => toggleSectionCollapse(secao.id)}
+                    title={isSectionCollapsed ? "Clique para expandir" : "Clique para minimizar"}
+                  >
                     <div className="plotter-config-card-title">
-                      <h4>{secao.nome}</h4>
+                      <div className="plotter-card-title-row">
+                        <h4>{secao.nome}</h4>
+                        {isSectionCollapsed && (
+                          <span className="plotter-card-badge-summary">
+                            {formatCm(filledCm)} / {formatCm(secao.alturaCm)} · {totalTacos} tacos
+                          </span>
+                        )}
+                      </div>
                       <p>
                         {formatCm(secao.alturaCm)} · {secao.percentual}%
                         {partCount > 1 ? ` · ${partCount} partes` : ''}
                       </p>
                     </div>
-                  </header>
 
-                  <div className="plotter-partitions">
-                    {partCount === 0 ? (
-                      <div className="plotter-partition-empty-state">
-                        <p>Nenhum taco nesta seção. Clique em "Adicionar repartição" abaixo para começar.</p>
-                      </div>
-                    ) : (
-                      bandStats.map(({ band, divisions }, index) => {
-                      const partition = band.partition;
-                      const label = partCount > 1 ? `${secao.nome} ${index + 1}` : secao.nome;
-                      const maxAlturaTaco = Math.max(1, Math.floor(band.alturaCm));
-                      const partColor = partition.cor || cor;
-                      const divisionColor =
-                        partition.corDivisao ||
-                        PARTITION_DIVISION_COLORS[index % PARTITION_DIVISION_COLORS.length];
-
-                      return (
-                        <div key={partition.id}>
-                          <div className="plotter-partition" style={{ borderColor: partColor }}>
-                            <div className="plotter-partition-head">
-                              <span
-                                className="plotter-config-color-swatch"
-                                style={{ background: partColor }}
-                                aria-hidden
-                              />
-                              <strong>{label}</strong>
-                              <span>{formatCm(band.alturaCm)}</span>
-                              {partCount > 1 ? (
-                                <button
-                                  type="button"
-                                  className="plotter-partition-remove"
-                                  onClick={() => removePartition(secao.id, partition.id)}
-                                  title="Remover reparticao"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              ) : null}
-                            </div>
-
-                            <div className="plotter-config-fields">
-                              <label className="plotter-field plotter-field-color">
-                                <span>Cor desta parte</span>
-                                <span className="plotter-color-control">
-                                  <input
-                                    type="color"
-                                    value={normalizeHexColor(partColor)}
-                                    onChange={(event) =>
-                                      updatePartitionMeta(secao.id, partition.id, {
-                                        cor: event.target.value,
-                                      })
-                                    }
-                                    aria-label={`Cor de ${label}`}
-                                  />
-                                  <em style={{ background: partColor }} />
-                                  <code>{normalizeHexColor(partColor)}</code>
-                                </span>
-                              </label>
-
-                              <label className="plotter-field">
-                                <span>Quantidade de tacos subindo</span>
-                                <input
-                                  type="number"
-                                  min={1}
-                                  step={1}
-                                  inputMode="numeric"
-                                  defaultValue={partition.tacosSubindo}
-                                  key={`subindo-${partition.id}-${partition.tacosSubindo}`}
-                                  onBlur={(event) => {
-                                    const next = Math.max(
-                                      1,
-                                      Math.floor(Number(event.target.value)) || partition.tacosSubindo || 10
-                                    );
-                                    if (next !== partition.tacosSubindo) {
-                                      updatePartitionSubindo(secao.id, partition.id, next);
-                                    }
-                                  }}
-                                  onKeyDown={(event) => {
-                                    if (event.key === 'Enter') {
-                                      (event.target as HTMLInputElement).blur();
-                                    }
-                                  }}
-                                />
-                              </label>
-
-                              <label className="plotter-field">
-                                <span>Tacos por gomo</span>
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={64}
-                                  step={1}
-                                  inputMode="numeric"
-                                  defaultValue={partition.tacosPorGomo}
-                                  key={`tpg-${partition.id}-${partition.tacosPorGomo}`}
-                                  onBlur={(event) => {
-                                    const next = Math.max(
-                                      1,
-                                      Math.min(64, Math.floor(Number(event.target.value)) || 1)
-                                    );
-                                    if (next !== partition.tacosPorGomo) {
-                                      updatePartitionTacosPorGomo(secao.id, partition.id, next);
-                                    }
-                                  }}
-                                  onKeyDown={(event) => {
-                                    if (event.key === 'Enter') {
-                                      (event.target as HTMLInputElement).blur();
-                                    }
-                                  }}
-                                />
-                              </label>
-
-                              <label className="plotter-field">
-                                <span>Altura do taco (cm)</span>
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={maxAlturaTaco}
-                                  step={1}
-                                  inputMode="numeric"
-                                  defaultValue={partition.alturaTacoCm}
-                                  key={`at-${partition.id}-${partition.alturaTacoCm}`}
-                                  onBlur={(event) => {
-                                    const next = Math.max(
-                                      1,
-                                      Math.min(maxAlturaTaco, Math.floor(Number(event.target.value)) || 1)
-                                    );
-                                    if (next !== partition.alturaTacoCm) {
-                                      updatePartitionAlturaTaco(secao.id, partition.id, next);
-                                    }
-                                  }}
-                                  onKeyDown={(event) => {
-                                    if (event.key === 'Enter') {
-                                      (event.target as HTMLInputElement).blur();
-                                    }
-                                  }}
-                                />
-                              </label>
-                            </div>
-
-                            <div className="plotter-config-summary">
-                              <span>
-                                <em>Subindo</em> {divisions.quantidadeVertical}
-                              </span>
-                              <span>
-                                <em>Por gomo</em> {partition.tacosPorGomo}
-                              </span>
-                              <span>
-                                <em>Total</em> {divisions.totalTacos}
-                              </span>
-                            </div>
-                          </div>
-
-                          {partCount > 1 && index < partCount - 1 ? (
-                            <div
-                              className="plotter-division-bar"
-                              style={{ borderColor: divisionColor }}
-                            >
-                              <span
-                                className="plotter-division-bar-line"
-                                style={{ background: divisionColor }}
-                              />
-                              <label className="plotter-field plotter-field-color">
-                                <span>Cor da linha de divisao</span>
-                                <span className="plotter-color-control">
-                                  <input
-                                    type="color"
-                                    value={normalizeHexColor(divisionColor)}
-                                    onChange={(event) =>
-                                      updatePartitionMeta(secao.id, partition.id, {
-                                        corDivisao: event.target.value,
-                                      })
-                                    }
-                                    aria-label={`Cor da linha de divisao abaixo de ${label}`}
-                                  />
-                                  <em style={{ background: divisionColor }} />
-                                  <code>{normalizeHexColor(divisionColor)}</code>
-                                </span>
-                              </label>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })
-                  )}
-                  </div>
-
-                  <div className="plotter-partition-actions">
                     <button
                       type="button"
-                      className="plotter-add-partition"
-                      onClick={() => addPartition(secao.id, secao.alturaCm)}
-                      disabled={partCount >= MAX_PARTITIONS}
+                      className="plotter-card-collapse-toggle"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleSectionCollapse(secao.id);
+                      }}
+                      title={isSectionCollapsed ? "Expandir seção" : "Minimizar seção"}
+                      aria-expanded={!isSectionCollapsed}
                     >
-                      <Plus size={15} />
-                      Adicionar reparticao
+                      {isSectionCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
                     </button>
-                    <span className="plotter-config-total">
-                      Total {secao.nome}: <strong>{totalTacos}</strong> tacos · {secao.percentual}%
-                    </span>
-                  </div>
+                  </header>
+
+                  {!isSectionCollapsed && (
+                    <>
+                      {/* Botao para avancar para a proxima secao — sempre no topo do card */}
+                      {nextSection && !unlockedSections.has(nextSection) && (
+                        <div className="plotter-unlock-next">
+                          <button
+                            type="button"
+                            className="plotter-unlock-btn"
+                            onClick={() => unlockSection(nextSection)}
+                          >
+                            Pronto! Iniciar {nextLabel} →
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Barra de progresso da secao */}
+                      <div className="plotter-section-progress-wrap">
+                        <div className="rifa-public-progress">
+                          <div
+                            className="rifa-public-progress-fill"
+                            style={{ width: `${progressPct}%`, background: cor }}
+                          />
+                        </div>
+                        <span className="plotter-section-progress-label">
+                          {formatCm(filledCm)} preenchidos de {formatCm(secao.alturaCm)} ({Math.round(progressPct)}%)
+                        </span>
+                      </div>
+
+                      <div className="plotter-partitions">
+                        {partCount === 0 ? (
+                          <div className="plotter-partition-empty-state">
+                            <p>Nenhum taco nesta seção. Clique em "Adicionar repartição" abaixo para começar.</p>
+                          </div>
+                        ) : (
+                          bandStats
+                            .filter(({ band }) => !(band.flatConfig as any).isBlank)
+                            .map(({ band, divisions }, index) => {
+                          const partition = band.partition;
+                          const isPartCollapsed = Boolean(collapsedPartitions[partition.id]);
+                          // Numeracao cresce de baixo pra cima
+                          const label = partCount > 1 ? `${secao.nome} ${partCount - index}` : secao.nome;
+                          const maxAlturaTaco = Math.max(1, Math.floor(band.alturaCm));
+                          const bicoMaxHeightCm =
+                            secao.id === 'bico' ? maxHeightForBicoPartition(tacoConfigs, partition.id) : Infinity;
+                          const maxSubindo =
+                            secao.id === 'bico'
+                              ? Math.max(1, Math.floor(bicoMaxHeightCm / Math.max(1, partition.alturaTacoCm)))
+                              : undefined;
+                          const maxAlturaTacoEfetivo =
+                            secao.id === 'bico'
+                              ? Math.min(
+                                  maxAlturaTaco,
+                                  Math.max(1, Math.floor(bicoMaxHeightCm / Math.max(1, partition.tacosSubindo ?? 1)))
+                                )
+                              : maxAlturaTaco;
+                          const warning = clampWarnings[partition.id];
+                          const partColor = partition.cor || cor;
+                          const divisionColor =
+                            partition.corDivisao ||
+                            PARTITION_DIVISION_COLORS[index % PARTITION_DIVISION_COLORS.length];
+
+                          return (
+                            <div key={partition.id}>
+                              <div className={`plotter-partition ${isPartCollapsed ? 'is-collapsed' : ''}`} style={{ borderColor: partColor }}>
+                                <div
+                                  className="plotter-partition-head"
+                                  onClick={() => togglePartitionCollapse(partition.id)}
+                                  title={isPartCollapsed ? "Clique para expandir repartição" : "Clique para minimizar repartição"}
+                                >
+                                  <span
+                                    className="plotter-config-color-swatch"
+                                    style={{ background: partColor }}
+                                    aria-hidden
+                                  />
+                                  <strong>{label}</strong>
+                                  <span>{formatCm(band.alturaCm)} · {divisions.totalTacos} tacos</span>
+                                  <button
+                                    type="button"
+                                    className="plotter-partition-add-above"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      addPartition(secao.id, secao.alturaCm, partition.id);
+                                    }}
+                                    disabled={partCount >= MAX_PARTITIONS}
+                                    title="Adicionar repartição acima deste card"
+                                  >
+                                    <Plus size={14} />
+                                  </button>
+                                  {partCount > 1 ? (
+                                    <button
+                                      type="button"
+                                      className="plotter-partition-remove"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        removePartition(secao.id, partition.id);
+                                      }}
+                                      title="Remover repartição"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    className="plotter-partition-collapse-toggle"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      togglePartitionCollapse(partition.id);
+                                    }}
+                                    title={isPartCollapsed ? "Expandir repartição" : "Minimizar repartição"}
+                                  >
+                                    {isPartCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                                  </button>
+                                </div>
+
+                                {!isPartCollapsed && (
+                                  <>
+                                    <div className="plotter-config-fields">
+                                      <label className="plotter-field plotter-field-color">
+                                        <span>Cor desta parte</span>
+                                        <span className="plotter-color-control">
+                                          <input
+                                            type="color"
+                                            value={normalizeHexColor(partColor)}
+                                            onChange={(event) =>
+                                              updatePartitionMeta(secao.id, partition.id, {
+                                                cor: event.target.value,
+                                              })
+                                            }
+                                            aria-label={`Cor de ${label}`}
+                                          />
+                                          <em style={{ background: partColor }} />
+                                          <code>{normalizeHexColor(partColor)}</code>
+                                        </span>
+                                      </label>
+
+                                      <label className="plotter-field">
+                                        <span>
+                                          Quantidade de tacos subindo
+                                          {maxSubindo !== undefined ? ` (max. ${maxSubindo} · restam ${formatCm(bicoMaxHeightCm)})` : ''}
+                                        </span>
+                                        <input
+                                          type="number"
+                                          min={1}
+                                          max={maxSubindo}
+                                          step={1}
+                                          inputMode="numeric"
+                                          defaultValue={partition.tacosSubindo}
+                                          key={`subindo-${partition.id}-${partition.tacosSubindo}`}
+                                          onBlur={(event) => {
+                                            let next = Math.max(
+                                              1,
+                                              Math.floor(Number(event.target.value)) || partition.tacosSubindo || 10
+                                            );
+                                            if (maxSubindo !== undefined && next > maxSubindo) {
+                                              next = maxSubindo;
+                                              event.target.value = String(next);
+                                              flashClampWarning(
+                                                partition.id,
+                                                `Ajustado para ${maxSubindo} — só cabem ${maxSubindo} tacos de ${formatCm(partition.alturaTacoCm)} no restante do Bico (${formatCm(bicoMaxHeightCm)}).`
+                                              );
+                                            }
+                                            if (next !== partition.tacosSubindo) {
+                                              updatePartitionSubindo(secao.id, partition.id, next);
+                                            }
+                                          }}
+                                          onKeyDown={(event) => {
+                                            if (event.key === 'Enter') {
+                                              (event.target as HTMLInputElement).blur();
+                                            }
+                                          }}
+                                        />
+                                      </label>
+
+                                      <label className="plotter-field">
+                                        <span>Tacos por gomo</span>
+                                        <input
+                                          type="number"
+                                          min={1}
+                                          max={64}
+                                          step={1}
+                                          inputMode="numeric"
+                                          defaultValue={partition.tacosPorGomo}
+                                          key={`tpg-${partition.id}-${partition.tacosPorGomo}`}
+                                          onBlur={(event) => {
+                                            const next = Math.max(
+                                              1,
+                                              Math.min(64, Math.floor(Number(event.target.value)) || 1)
+                                            );
+                                            if (next !== partition.tacosPorGomo) {
+                                              updatePartitionTacosPorGomo(secao.id, partition.id, next);
+                                            }
+                                          }}
+                                          onKeyDown={(event) => {
+                                            if (event.key === 'Enter') {
+                                              (event.target as HTMLInputElement).blur();
+                                            }
+                                          }}
+                                        />
+                                      </label>
+
+                                      <label className="plotter-field">
+                                        <span>Altura do taco (cm)</span>
+                                        <input
+                                          type="number"
+                                          min={1}
+                                          max={maxAlturaTacoEfetivo}
+                                          step={1}
+                                          inputMode="numeric"
+                                          defaultValue={partition.alturaTacoCm}
+                                          key={`at-${partition.id}-${partition.alturaTacoCm}`}
+                                          onBlur={(event) => {
+                                            let next = Math.max(
+                                              1,
+                                              Math.min(maxAlturaTaco, Math.floor(Number(event.target.value)) || 1)
+                                            );
+                                            if (secao.id === 'bico' && next > maxAlturaTacoEfetivo) {
+                                              next = maxAlturaTacoEfetivo;
+                                              event.target.value = String(next);
+                                              flashClampWarning(
+                                                partition.id,
+                                                `Ajustado para ${next} cm — com ${partition.tacosSubindo} tacos subindo só cabe essa altura no restante do Bico (${formatCm(bicoMaxHeightCm)}).`
+                                              );
+                                            }
+                                            if (next !== partition.alturaTacoCm) {
+                                              updatePartitionAlturaTaco(secao.id, partition.id, next);
+                                            }
+                                          }}
+                                          onKeyDown={(event) => {
+                                            if (event.key === 'Enter') {
+                                              (event.target as HTMLInputElement).blur();
+                                            }
+                                          }}
+                                        />
+                                      </label>
+                                    </div>
+
+                                    {warning ? <p className="plotter-clamp-warning">{warning}</p> : null}
+
+                                    <div className="plotter-config-summary">
+                                      <span>
+                                        <em>Subindo</em> {divisions.quantidadeVertical}
+                                      </span>
+                                      <span>
+                                        <em>Por gomo</em> {partition.tacosPorGomo}
+                                      </span>
+                                      <span>
+                                        <em>Total</em> {divisions.totalTacos}
+                                      </span>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+
+                              {!isPartCollapsed && partCount > 1 && index < partCount - 1 ? (
+                                <div
+                                  className="plotter-division-bar"
+                                  style={{ borderColor: divisionColor }}
+                                >
+                                  <span
+                                    className="plotter-division-bar-line"
+                                    style={{ background: divisionColor }}
+                                  />
+                                  <label className="plotter-field plotter-field-color">
+                                    <span>Cor da linha de divisao</span>
+                                    <span className="plotter-color-control">
+                                      <input
+                                        type="color"
+                                        value={normalizeHexColor(divisionColor)}
+                                        onChange={(event) =>
+                                          updatePartitionMeta(secao.id, partition.id, {
+                                            corDivisao: event.target.value,
+                                          })
+                                        }
+                                        aria-label={`Cor da linha de divisao abaixo de ${label}`}
+                                      />
+                                      <em style={{ background: divisionColor }} />
+                                      <code>{normalizeHexColor(divisionColor)}</code>
+                                    </span>
+                                  </label>
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })
+                      )}
+                      </div>
+
+                      <div className="plotter-partition-actions">
+                        <button
+                          type="button"
+                          className="plotter-add-partition"
+                          onClick={() => addPartition(secao.id, secao.alturaCm)}
+                          disabled={partCount >= MAX_PARTITIONS}
+                        >
+                          <Plus size={15} />
+                          Adicionar reparticao
+                        </button>
+                        <span className="plotter-config-total">
+                          Total {secao.nome}: <strong>{totalTacos}</strong> tacos · {secao.percentual}%
+                        </span>
+                      </div>
+                    </>
+                  )}
                 </section>
               );
             })}
           </aside>
         </div>
       ) : null}
+
+      <nav className="plotter-mobile-bottom-bar" aria-label="Navegação móvel de seções">
+        <button
+          type="button"
+          className={`mobile-bar-btn ${!collapsedSections['boca'] ? 'active' : ''}`}
+          onClick={() => {
+            setCollapsedSections((prev) => ({ ...prev, boca: false }));
+            document.querySelector('.plotter-config-card')?.scrollIntoView({ behavior: 'smooth' });
+          }}
+        >
+          <span>Boca</span>
+        </button>
+        <button
+          type="button"
+          className={`mobile-bar-btn ${!collapsedSections['bojo'] ? 'active' : ''}`}
+          onClick={() => {
+            unlockSection('bojo');
+            setCollapsedSections((prev) => ({ ...prev, bojo: false }));
+            const cards = document.querySelectorAll('.plotter-config-card');
+            cards[1]?.scrollIntoView({ behavior: 'smooth' });
+          }}
+        >
+          <span>Bojo</span>
+        </button>
+        <button
+          type="button"
+          className={`mobile-bar-btn ${!collapsedSections['bico'] ? 'active' : ''}`}
+          onClick={() => {
+            unlockSection('bico');
+            setCollapsedSections((prev) => ({ ...prev, bico: false }));
+            const cards = document.querySelectorAll('.plotter-config-card');
+            cards[2]?.scrollIntoView({ behavior: 'smooth' });
+          }}
+        >
+          <span>Bico</span>
+        </button>
+        <button
+          type="button"
+          className="mobile-bar-btn"
+          onClick={handleCollapseAllSections}
+          title="Minimizar todos os cards"
+        >
+          <ChevronsUp size={18} />
+          <span>Fechar</span>
+        </button>
+        {mold && (
+          <button
+            type="button"
+            className="mobile-bar-btn save-btn"
+            onClick={() => void handleSaveConfig()}
+            disabled={saving || loading}
+          >
+            <Save size={18} />
+            <span>{saving ? 'Salvar...' : 'Salvar'}</span>
+          </button>
+        )}
+      </nav>
     </div>
   );
 }

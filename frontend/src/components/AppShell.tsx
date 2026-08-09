@@ -1,10 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronDown, Lock, Menu, PanelLeftClose, PanelLeftOpen, Sparkles, X, Smartphone } from 'lucide-react';
+import { ChevronDown, Lock, Menu, PanelLeftClose, PanelLeftOpen, Sparkles, X, Smartphone, Play, Minimize2, Maximize2 } from 'lucide-react';
 import { InstagramIcon, TelegramIcon, WhatsAppIcon } from './BrandIcons';
 import type { NavItem } from '../config/userNavigation';
 import { buildSocialUrl } from '../lib/socialLinks';
 import type { SystemSettings, User } from '../types';
 import { hasPaidAccess } from '../lib/access';
+import { api } from '../lib/api';
 
 const COLLAPSE_STORAGE_KEY = 'sidebar_collapsed';
 
@@ -84,9 +85,44 @@ export function AppShell({ user, navGroups, activeId, onSelect, onLogout, social
     return parentId ? new Set([parentId]) : new Set();
   });
 
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [tutorialMinimized, setTutorialMinimized] = useState(false);
+
+  useEffect(() => {
+    setTutorialOpen(false);
+    setTutorialMinimized(false);
+  }, [activeId]);
+
+  const activeTutorial = socialLinks?.tutorials?.[activeId];
+  const showTutorialButton = activeTutorial && activeTutorial.show && !!activeTutorial.video_url;
+  const embedUrl = showTutorialButton ? getYoutubeEmbedUrl(activeTutorial.video_url) : null;
+
+  const activeItem = navGroups
+    .flatMap((g) => g.flatMap((item) => (item.children?.length ? item.children : [item])))
+    .find((item) => item.id === activeId);
+
   useEffect(() => {
     localStorage.setItem(COLLAPSE_STORAGE_KEY, collapsed ? '1' : '0');
   }, [collapsed]);
+
+  // Periodic session heartbeat to keep user session alive
+  useEffect(() => {
+    const token = localStorage.getItem('plotter_token');
+    if (!token) return;
+
+    const sendHeartbeat = () => {
+      api.heartbeat(token).catch(() => {
+        // If the heartbeat fails (e.g. 401 Unauthorized because session was revoked/expired),
+        // trigger logout to clean client state and redirect to login screen
+        onLogout();
+      });
+    };
+
+    sendHeartbeat();
+    const interval = setInterval(sendHeartbeat, 25000);
+
+    return () => clearInterval(interval);
+  }, [onLogout]);
 
   function handleSelect(id: string) {
     onSelect(id);
@@ -136,9 +172,43 @@ export function AppShell({ user, navGroups, activeId, onSelect, onLogout, social
             </span>
           </div>
         </div>
-        <button type="button" className="topbar-logout" onClick={onLogout}>
-          Sair
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {showTutorialButton && embedUrl && !tutorialOpen && (
+            <button
+              type="button"
+              className="tutorial-pulse-btn"
+              onClick={() => setTutorialOpen(true)}
+              style={{
+                background: 'linear-gradient(135deg, #3182ce 0%, #2b6cb0 100%)',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '10px',
+                padding: '10px 16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontWeight: 600,
+                fontSize: '13px',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease-in-out',
+                height: '38px',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-1px) scale(1.02)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'none';
+              }}
+            >
+              <Play size={14} fill="currentColor" />
+              <span>Vídeo Tutorial</span>
+            </button>
+          )}
+
+          <button type="button" className="topbar-logout" onClick={onLogout}>
+            Sair
+          </button>
+        </div>
       </header>
 
       <div className="app-body">
@@ -224,6 +294,140 @@ export function AppShell({ user, navGroups, activeId, onSelect, onLogout, social
       </div>
 
       <AppFooter socialLinks={socialLinks} onDownloadApp={() => handleSelect('baixar-app')} />
+
+      {/* Card Flutuante do Vídeo Tutorial */}
+      {showTutorialButton && embedUrl && tutorialOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '80px',
+            right: '24px',
+            width: '380px',
+            maxWidth: 'calc(100vw - 48px)',
+            background: '#111622',
+            border: '2px solid #3182ce',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 15px rgba(49, 130, 206, 0.2)',
+            borderRadius: '12px',
+            zIndex: 9999,
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            transition: 'all 0.3s ease-in-out',
+            height: tutorialMinimized ? '44px' : '294px',
+          }}
+        >
+          {/* Card Header */}
+          <div
+            style={{
+              background: '#182030',
+              padding: '10px 16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              borderBottom: '1px solid #1f293d',
+              height: '44px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+              <span style={{ fontSize: '16px', flexShrink: 0 }}>🎥</span>
+              <span
+                style={{
+                  color: '#fff',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                Tutorial: {activeItem?.label}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {/* Minimize / Maximize */}
+              <button
+                type="button"
+                onClick={() => setTutorialMinimized(!tutorialMinimized)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#718096',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: '4px',
+                  transition: 'color 0.2s',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = '#fff')}
+                onMouseLeave={(e) => (e.currentTarget.style.color = '#718096')}
+                title={tutorialMinimized ? 'Maximizar' : 'Minimizar'}
+              >
+                {tutorialMinimized ? <Maximize2 size={14} /> : <Minimize2 size={14} />}
+              </button>
+
+              {/* Close */}
+              <button
+                type="button"
+                onClick={() => setTutorialOpen(false)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#718096',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: '4px',
+                  transition: 'color 0.2s',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = '#e53e3e')}
+                onMouseLeave={(e) => (e.currentTarget.style.color = '#718096')}
+                title="Fechar"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+
+          {/* Card Body - Video Player */}
+          <div style={{ 
+            flex: 1, 
+            position: 'relative', 
+            background: '#000',
+            display: tutorialMinimized ? 'none' : 'block'
+          }}>
+            <iframe
+              width="100%"
+              height="246"
+              src={embedUrl}
+              title="Vídeo Tutorial"
+              frameBorder="0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+              style={{ border: 'none', display: 'block' }}
+            ></iframe>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function getYoutubeEmbedUrl(url: string): string | null {
+  if (!url) return null;
+  let videoId: string | null = null;
+  try {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|shorts\/)([^#\&\?]*).*/;
+    const match = url.match(regExp);
+    if (match && match[2].length === 11) {
+      videoId = match[2];
+    }
+  } catch (e) {
+    return null;
+  }
+  return videoId ? `https://www.youtube.com/embed/${videoId}` : null;
 }

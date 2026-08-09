@@ -3,18 +3,23 @@ import { AppShell } from '../components/AppShell';
 import { SectionPlaceholder } from '../components/SectionPlaceholder';
 import {
   accountNavItems,
+  filterHiddenNavItems,
   flattenNavItems,
   isNavItemHidden,
   mainNavItems,
+  PLANO_ABA_GROUP_BY_NAV_ID,
   solicitarAcessoNavItem,
   type NavItem,
 } from '../config/userNavigation';
 import { api } from '../lib/api';
 import { hasPaidAccess } from '../lib/access';
 import { useAuth } from '../lib/auth';
-import type { MoldProjectSummary, MoldSummary, SystemSettings } from '../types';
+import type { LanternaProject, MoldProjectSummary, MoldSummary, SystemSettings, Comunicado } from '../types';
 import { BaixarAppPage } from './BaixarAppPage';
 import { BandeiraWorkspace } from './BandeiraWorkspace';
+import { BiscoitoGolfierWorkspace } from './BiscoitoGolfierWorkspace';
+import { LanternagemBojoWorkspace } from './LanternagemBojoWorkspace';
+import { LanternagemProjectGallery } from './LanternagemProjectGallery';
 import { Modelo3DWorkspace } from './Modelo3DWorkspace';
 import { MoldGallery } from './MoldGallery';
 import { MoldTableForm } from './MoldTableForm';
@@ -34,6 +39,11 @@ interface PlotterTarget {
   isBlank?: boolean;
 }
 
+/** Ultima aba visitada (ver useState de activeId) -- so a aba em si, nao o
+ * projeto especifico que estava aberto (ex: "Modificar" um molde nao
+ * reabre sozinho depois de um F5). */
+const LAST_TAB_STORAGE_KEY = 'sistema-novo:user-area:last-tab';
+
 
 
 interface UserAreaProps {
@@ -46,6 +56,7 @@ interface UserAreaProps {
 export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
   const { user, token, logout } = useAuth();
   const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null);
+  const [pendingComm, setPendingComm] = useState<Comunicado | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -55,7 +66,27 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
       .catch(() => {
         // silencioso -- rodape/ocultar abas sao cosmeticos, nao pode travar o app se falhar
       });
+
+    // Carregar comunicados pendentes
+    api
+      .getPendingComunicado(token)
+      .then((res) => {
+        if (res.data) {
+          setPendingComm(res.data);
+        }
+      })
+      .catch(() => {});
   }, [token]);
+
+  const handleCloseComunicado = async () => {
+    if (!pendingComm || !token) return;
+    try {
+      await api.markComunicadoAsRead(pendingComm.id, token);
+      setPendingComm(null);
+    } catch {
+      setPendingComm(null);
+    }
+  };
 
   const hiddenIds = useMemo(() => new Set(systemSettings?.hidden_nav_items ?? []), [systemSettings]);
 
@@ -69,14 +100,11 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
   // Aba oculta some pra todo mundo, admin incluso — "Usuarios"/"Redes Sociais"/
   // "Abas" ficam de fora dessa lista (sao um grupo de nav a parte, sempre
   // visivel), entao o admin nunca perde acesso a tela que desfaz o ocultar.
-  const visibleMainNavItems = useMemo(
-    () => mainNavItems.filter((item) => !hiddenIds.has(item.id)),
-    [hiddenIds]
-  );
-  const visibleAccountNavItems = useMemo(
-    () => accountNavItems.filter((item) => !hiddenIds.has(item.id)),
-    [hiddenIds]
-  );
+  // Esconder e por FOLHA (ex.: so "Galeria de Moldes", nao o grupo "Moldes"
+  // inteiro) — filterHiddenNavItems tira as folhas escondidas e some com o
+  // grupo sozinho se todas as folhas dele sumirem.
+  const visibleMainNavItems = useMemo(() => filterHiddenNavItems(mainNavItems, hiddenIds), [hiddenIds]);
+  const visibleAccountNavItems = useMemo(() => filterHiddenNavItems(accountNavItems, hiddenIds), [hiddenIds]);
 
   const navGroups = useMemo(
     () => {
@@ -93,10 +121,98 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
    * ela (ex: "Plotar Risco" na galeria) — vale pra todo mundo, admin incluso. */
   const canUse = (id: string) => !isNavItemHidden(id, hiddenIds);
 
-  const [activeId, setActiveId] = useState(selectableItems[0].id);
-  const [editingMoldId, setEditingMoldId] = useState<number | null>(null);
-  const [plotterTarget, setPlotterTarget] = useState<PlotterTarget | null>(null);
-  const [plotTacoModalMold, setPlotTacoModalMold] = useState<MoldSummary | null>(null);
+  /**
+   * O plano do usuario nao inclui essa aba? `allowed_abas === null` (admin,
+   * ou plano que libera tudo) nunca bloqueia aqui — so entra em jogo quando
+   * o usuario JA tem acesso pago (nao confundir com `locked`, que e "nao
+   * pagou nada ainda"). Ids fora de PLANO_ABA_GROUP_BY_NAV_ID (configuracoes,
+   * solicitar-acesso) nunca ficam bloqueados por plano.
+   */
+  const isBlockedByPlano = (id: string) => {
+    if (!user || user.role === 'admin' || !user.allowed_abas) return false;
+    const group = PLANO_ABA_GROUP_BY_NAV_ID[id];
+    if (!group) return false;
+    return !user.allowed_abas.includes(group);
+  };
+
+  // Lembra a ultima aba visitada -- atualizar a pagina (F5) tem que manter o
+  // usuario onde ele estava, nao voltar pra "Galeria de Moldes" (1o item).
+  const [activeId, setActiveId] = useState(() => {
+    try {
+      const saved = window.localStorage.getItem(LAST_TAB_STORAGE_KEY);
+      if (saved && selectableItems.some((item) => item.id === saved)) {
+        return saved;
+      }
+    } catch {
+      // localStorage indisponivel (modo privado etc) -- comeca na 1a aba
+    }
+    return selectableItems[0].id;
+  });
+
+  const [editingMoldId, setEditingMoldId] = useState<number | null>(() => {
+    try {
+      const saved = window.localStorage.getItem('sistema-novo:user-area:editing-mold-id');
+      return saved ? Number(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [plotterTarget, setPlotterTarget] = useState<PlotterTarget | null>(() => {
+    try {
+      const saved = window.localStorage.getItem('sistema-novo:user-area:plotter-target');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [lanternaProjectId, setLanternaProjectId] = useState<number | null>(() => {
+    try {
+      const saved = window.localStorage.getItem('sistema-novo:user-area:lanterna-project-id');
+      return saved ? Number(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LAST_TAB_STORAGE_KEY, activeId);
+    } catch {
+      // ignora se localStorage nao gravar (modo privado etc)
+    }
+  }, [activeId]);
+
+  useEffect(() => {
+    try {
+      if (editingMoldId !== null) {
+        window.localStorage.setItem('sistema-novo:user-area:editing-mold-id', String(editingMoldId));
+      } else {
+        window.localStorage.removeItem('sistema-novo:user-area:editing-mold-id');
+      }
+    } catch {}
+  }, [editingMoldId]);
+
+  useEffect(() => {
+    try {
+      if (plotterTarget !== null) {
+        window.localStorage.setItem('sistema-novo:user-area:plotter-target', JSON.stringify(plotterTarget));
+      } else {
+        window.localStorage.removeItem('sistema-novo:user-area:plotter-target');
+      }
+    } catch {}
+  }, [plotterTarget]);
+
+  useEffect(() => {
+    try {
+      if (lanternaProjectId !== null) {
+        window.localStorage.setItem('sistema-novo:user-area:lanterna-project-id', String(lanternaProjectId));
+      } else {
+        window.localStorage.removeItem('sistema-novo:user-area:lanterna-project-id');
+      }
+    } catch {}
+  }, [lanternaProjectId]);
 
   if (!user) {
     return null;
@@ -110,7 +226,15 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
     if (id !== 'plotter-tacos') {
       setPlotterTarget(null);
     }
+    if (id !== 'acabamento-lanternagem-bojo') {
+      setLanternaProjectId(null);
+    }
     setActiveId(id);
+  }
+
+  function handleOpenLanternaProject(project: LanternaProject) {
+    setLanternaProjectId(project.id);
+    setActiveId('acabamento-lanternagem-bojo');
   }
 
   function handleEditMold(moldId: number) {
@@ -124,10 +248,17 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
     setActiveId('moldes-tabela');
   }
 
-  /** "Plotar no Taco" na Galeria: sempre comeca do zero, sem projeto — salvar
-   * cria um projeto NOVO, nunca reaproveita um ja existente desse molde. */
+  /** "Plotar no Taco" na Galeria: sempre comeca do zero, sem projeto, molde em branco —
+   * salvar cria um projeto NOVO, nunca reaproveita um ja existente desse molde. */
   function handlePlotTaco(mold: MoldSummary) {
-    setPlotTacoModalMold(mold);
+    setPlotterTarget({
+      moldId: mold.id,
+      projectId: null,
+      nome: mold.nome,
+      modelo: mold.modelo,
+      isBlank: true,
+    });
+    setActiveId('plotter-tacos');
   }
 
 
@@ -158,7 +289,14 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
   // (chegou ali por algum atalho que a gente deixou passar), mostra o
   // placeholder generico em vez do conteudo de verdade.
   const blocked = !canUse(activeId);
-  const isLockedTab = locked && activeId !== 'solicitar-acesso' && activeId !== 'configuracoes';
+  // Trava por 2 motivos possiveis: nao pagou plano nenhum ainda (`locked`),
+  // ou ja paga mas o PLANO especifico dele nao inclui essa aba
+  // (`isBlockedByPlano`) — os dois casos reaproveitam a mesma tela de
+  // "Solicitar Acesso" com o aviso de aba bloqueada.
+  const isLockedTab =
+    activeId !== 'solicitar-acesso' &&
+    activeId !== 'configuracoes' &&
+    (locked || isBlockedByPlano(activeId));
 
   return (
     <>
@@ -173,9 +311,9 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
       {blocked ? (
         <SectionPlaceholder item={activeItem} note="Essa area nao esta disponivel no momento." />
       ) : isLockedTab ? (
-        <SolicitarAcessoPage lockedTabLabel={activeItem.label} />
+        <SolicitarAcessoPage lockedTabLabel={activeItem.label} systemSettings={systemSettings} />
       ) : activeId === 'solicitar-acesso' ? (
-        <SolicitarAcessoPage />
+        <SolicitarAcessoPage systemSettings={systemSettings} />
       ) : activeId === 'moldes-galeria' ? (
         <MoldGallery
           onEdit={handleEditMold}
@@ -187,6 +325,12 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
         <ProjectGallery onModify={handleModifyProject} showModify={canUse('plotter-tacos')} />
       ) : activeId === 'bandeiras' ? (
         <BandeiraWorkspace />
+      ) : activeId === 'acabamento-lanternagem-bojo' ? (
+        <LanternagemBojoWorkspace projectId={lanternaProjectId} />
+      ) : activeId === 'acabamento-biscoito-golfier' ? (
+        <BiscoitoGolfierWorkspace />
+      ) : activeId === 'projetos-lanternagem-bojo' ? (
+        <LanternagemProjectGallery onOpen={handleOpenLanternaProject} />
       ) : activeId === 'painel-letreiros' ? (
         <PainelWorkspace />
       ) : activeId === '3d-fotos' ? (
@@ -197,11 +341,6 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
         <BaixarAppPage />
       ) : activeId === 'configuracoes' ? (
         <UserSettingsPage />
-      ) : activeId === 'projetos-moldes-riscados' ? (
-        <SectionPlaceholder
-          item={activeItem}
-          note="Assim que voce plotar por aqui, os projetos salvos vao aparecer nesta aba."
-        />
       ) : activeId === 'plotter-riscado' ? (
         <PlotterRiscadoPage />
       ) : activeId === 'moldes-tabela' ? (
@@ -232,77 +371,87 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
       )}
     </AppShell>
 
-    {plotTacoModalMold && (
-      <div className="plot-choice-modal-overlay">
-        <div className="plot-choice-modal-card">
-          <div className="plot-choice-modal-header">
-            <h3>Configuração da Plotagem (Tacos)</h3>
-            <p>Escolha como deseja iniciar a plotagem para o molde <strong>{plotTacoModalMold.nome}</strong>.</p>
+    {/* Pop-up de Comunicado (exibido apenas 1 vez para cada cliente) */}
+    {pendingComm && (
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 99999,
+        padding: '20px',
+        backdropFilter: 'blur(4px)'
+      }}>
+        <div style={{
+          background: '#111622',
+          border: '2px solid #3182ce',
+          borderRadius: '12px',
+          padding: '28px',
+          maxWidth: '520px',
+          width: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '16px',
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4)'
+        }}>
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', borderBottom: '1px solid #1f293d', paddingBottom: '12px' }}>
+            <div style={{ background: 'rgba(49,130,206,0.1)', padding: '8px', borderRadius: '8px' }}>
+              <span style={{ fontSize: '20px' }}>📢</span>
+            </div>
+            <div>
+              <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#fff', margin: 0 }}>Aviso Importante</h3>
+              <span style={{ fontSize: '11px', color: '#718096' }}>Comunicado oficial</span>
+            </div>
           </div>
 
-          <div className="plot-choice-grid">
-            <button
-              type="button"
-              className="plot-choice-option-card standard"
-              onClick={() => {
-                setPlotterTarget({
-                  moldId: plotTacoModalMold.id,
-                  projectId: null,
-                  nome: plotTacoModalMold.nome,
-                  modelo: plotTacoModalMold.modelo,
-                  isBlank: false
-                });
-                setPlotTacoModalMold(null);
-                setActiveId('plotter-tacos');
-              }}
-            >
-              <div className="plot-choice-option-icon">📏</div>
-              <div className="plot-choice-option-content">
-                <h4>Preenchido com Tacos (Padrão)</h4>
-                <p>Inicia automaticamente com tacos de 5cm nas seguintes quantidades:</p>
-                <ul>
-                  <li>Boca: 4 tacos</li>
-                  <li>Bojo: 8 tacos</li>
-                  <li>Bico: 4 tacos</li>
-                </ul>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              className="plot-choice-option-card blank"
-              onClick={() => {
-                setPlotterTarget({
-                  moldId: plotTacoModalMold.id,
-                  projectId: null,
-                  nome: plotTacoModalMold.nome,
-                  modelo: plotTacoModalMold.modelo,
-                  isBlank: true
-                });
-                setPlotTacoModalMold(null);
-                setActiveId('plotter-tacos');
-              }}
-            >
-              <div className="plot-choice-option-icon">🔲</div>
-              <div className="plot-choice-option-content">
-                <h4>Molde em Branco</h4>
-                <p>Inicia sem nenhum taco. Você poderá adicionar e ajustar suas próprias repartições de tacos, definindo a quantidade e o tamanho de cada parte.</p>
-              </div>
-            </button>
+          {/* Titulo & Conteudo */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <h4 style={{ fontSize: '16px', fontWeight: 600, color: '#3182ce', margin: 0 }}>{pendingComm.titulo}</h4>
+            <p style={{
+              color: '#cbd5e0',
+              fontSize: '14px',
+              lineHeight: '1.5',
+              whiteSpace: 'pre-wrap',
+              margin: '6px 0 0 0',
+              maxHeight: '260px',
+              overflowY: 'auto',
+              paddingRight: '6px'
+            }}>
+              {pendingComm.conteudo}
+            </p>
           </div>
 
-          <div className="plot-choice-modal-footer">
-            <button
-              type="button"
-              className="mold-import-button"
-              onClick={() => setPlotTacoModalMold(null)}
-            >
-              Cancelar
-            </button>
-          </div>
+          {/* Action */}
+          <button
+            type="button"
+            onClick={() => void handleCloseComunicado()}
+            style={{
+              background: '#3182ce',
+              color: '#fff',
+              border: 'none',
+              padding: '12px',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: 700,
+              fontSize: '14px',
+              marginTop: '8px',
+              textAlign: 'center',
+              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.2)',
+              transition: 'background 0.2s'
+            }}
+          >
+            Entendi / Fechar
+          </button>
         </div>
       </div>
     )}
+
     </>
   );
 }

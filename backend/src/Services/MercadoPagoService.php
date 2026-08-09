@@ -55,6 +55,66 @@ final class MercadoPagoService
     }
 
     /**
+     * Cobranca por cartao de credito. Diferente do Pix, os dados do cartao nunca
+     * passam pelo nosso backend: o SDK JS do Mercado Pago tokeniza no navegador e
+     * so o `token` (+ payment_method_id, issuer_id, installments, CPF e o
+     * device_id antifraude) chega aqui. O pagamento costuma resolver na hora
+     * (approved/rejected), diferente do Pix que fica pendente ate o QR ser pago.
+     *
+     * @param array{type:string, number:string}|null $identification
+     * @return array{id:string, status:string, status_detail:string}
+     */
+    public function createCardPayment(
+        float $valor,
+        string $description,
+        string $externalReference,
+        string $payerEmail,
+        string $notificationUrl,
+        string $token,
+        string $paymentMethodId,
+        int $installments,
+        ?int $issuerId,
+        ?array $identification,
+        ?string $deviceId
+    ): array {
+        $payload = [
+            'transaction_amount' => $valor,
+            'token' => $token,
+            'description' => $description,
+            'installments' => $installments,
+            'payment_method_id' => $paymentMethodId,
+            'external_reference' => $externalReference,
+            'notification_url' => $notificationUrl,
+            'capture' => true,
+            'payer' => ['email' => $payerEmail],
+        ];
+        if ($issuerId !== null) {
+            $payload['issuer_id'] = $issuerId;
+        }
+        if ($identification !== null) {
+            $payload['payer']['identification'] = $identification;
+        }
+
+        $headers = ['X-Idempotency-Key: ' . bin2hex(random_bytes(16))];
+        if ($deviceId !== null && $deviceId !== '') {
+            // Header antifraude do Mercado Pago (device fingerprint do checkout).
+            $headers[] = 'X-meli-session-id: ' . $deviceId;
+        }
+
+        $response = $this->call('POST', self::API_URL, $payload, $headers);
+
+        if (!isset($response['id'])) {
+            throw new RuntimeException('O Mercado Pago nao retornou os dados do pagamento.');
+        }
+
+        return [
+            'id' => (string) $response['id'],
+            'status' => (string) ($response['status'] ?? 'pending'),
+            'status_detail' => (string) ($response['status_detail'] ?? ''),
+        ];
+    }
+
+    /**
      * Sempre re-consulta a API do Mercado Pago com o token proprio — usado
      * tanto no polling quanto no webhook, que nunca deve confiar direto no
      * status recebido no corpo da notificacao.

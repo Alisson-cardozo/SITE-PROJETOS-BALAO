@@ -39,6 +39,35 @@ final class MoldProjectService
         return array_map(fn (array $row) => $this->toPublicArray($row), $rows);
     }
 
+    public function listByUserId(int $userId): array
+    {
+        $sql = <<<'SQL'
+            SELECT
+              mp.*,
+              m.nome AS mold_nome,
+              m.modelo AS mold_modelo,
+              m.quantidade_gomos AS mold_quantidade_gomos,
+              m.bainha_cm AS mold_bainha_cm,
+              m.altura_total_cm AS mold_altura_total_cm,
+              m.pontos_json AS mold_pontos_json,
+              creator.name AS created_by_name,
+              updater.name AS updated_by_name,
+              ROW_NUMBER() OVER (PARTITION BY mp.mold_id ORDER BY mp.id ASC) AS project_number
+            FROM mold_projects mp
+            INNER JOIN molds m ON m.id = mp.mold_id
+            INNER JOIN users creator ON creator.id = mp.created_by
+            INNER JOIN users updater ON updater.id = mp.updated_by
+            WHERE mp.created_by = :user_id
+            ORDER BY mp.updated_at DESC, mp.id DESC
+        SQL;
+
+        $stmt = Db::connection()->prepare($sql);
+        $stmt->execute(['user_id' => $userId]);
+        $rows = $stmt->fetchAll();
+
+        return array_map(fn (array $row) => $this->toPublicArray($row), $rows);
+    }
+
     public function findById(int $id): ?array
     {
         $sql = <<<'SQL'

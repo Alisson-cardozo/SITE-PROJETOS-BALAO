@@ -159,7 +159,9 @@ final class RifaService
             'slug' => (string) $row['slug'],
             'descricao' => (string) $row['descricao'],
             'fotos' => array_map(
-                fn (?string $path) => $path === null ? null : rtrim((string) app()->env('APP_URL', ''), '/') . '/' . ltrim($path, '/'),
+                // Path relativo (ex: /uploads/rifas/.../foto1.jpg) — funciona em
+                // qualquer dominio sem depender de APP_URL configurado corretamente.
+                fn (?string $path) => $path === null ? null : '/' . ltrim($path, '/'),
                 [$row['foto1_path'], $row['foto2_path']]
             ),
             'valor_numero' => (float) $row['valor_numero'],

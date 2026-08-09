@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Download, Droplet, Grid3x3, Hand, ImagePlus, Loader2, Maximize2, Pencil, Send, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { Download, Droplet, FileImage, FolderOpen, Grid3x3, Hand, Hash, ImagePlus, Layers, Loader2, Maximize2, Palette, Pencil, Send, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { downloadBlob, downloadCanvasAsPng, slugifyFilename } from '../lib/pdfExport';
 import {
   buildColorSummary,
   CM_POR_PIXEL,
   computeGridSize,
+  computeTacosPerFolha,
   expandedSizeExceedsLimit,
   expandGrid,
-  computeTacosPerFolha,
   FOLHA_NOMINAL_ALTURA_CM,
   FOLHA_NOMINAL_LARGURA_CM,
   FOLHA_USAVEL_ALTURA_CM,
@@ -15,16 +16,17 @@ import {
   MAX_EXPANDED_CELLS,
   MAX_GRID_CELLS,
   MAX_GRID_SIDE,
-  reduceBandeiraPalette,
+  readBandeiraNativePixelGrid,
   readBandeiraPixelGrid,
+  reduceBandeiraPalette,
   replaceColorInGrid,
   snapNearBlackToBlack,
   type BandeiraColorSummaryEntry,
 } from '../lib/bandeiraImage';
 import { hexToRgb } from '../lib/colorMath';
 import { buildBandeiraPdf, type BandeiraDivisionMode } from '../lib/bandeiraPdf';
-import { downloadBlob, slugifyFilename } from '../lib/pdfExport';
 import { SendBandeiraEmailModal } from '../components/SendBandeiraEmailModal';
+import { ImageCropModal } from '../components/ImageCropModal';
 import { numericFieldProps } from '../lib/numericInput';
 
 /** Tamanho base (px de tela, antes do zoom) de cada celula. Grades muito
@@ -48,7 +50,7 @@ const MAX_UNDO_STEPS = 3;
 const DEFAULT_COARSE_GRID_COLOR = '#2563eb';
 
 type Tool = 'mover' | 'lapis' | 'contagotas';
-type SidebarTab = 'cores' | 'numerar' | 'grades' | 'contagem' | 'dividir';
+type SidebarTab = 'tamanho' | 'cores' | 'numerar' | 'grades' | 'contagem' | 'dividir';
 
 function formatCm(value: number): string {
   const n = Number(value);
@@ -66,22 +68,34 @@ function computeCellBasePx(gridWidth: number, gridHeight: number): number {
 }
 
 export function BandeiraWorkspace() {
-  const [larguraCm, setLarguraCm] = useState('');
-  const [alturaCm, setAlturaCm] = useState('');
+  const draftData = (() => {
+    try {
+      const saved = window.localStorage.getItem('sistema-novo:draft:bandeira');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const [larguraCm, setLarguraCm] = useState(() => draftData?.larguraCm ?? '');
+  const [alturaCm, setAlturaCm] = useState(() => draftData?.alturaCm ?? '');
   const [file, setFile] = useState<File | null>(null);
+  /** Arquivo recem-escolhido, aguardando o recorte (ver ImageCropModal) antes
+   * de virar `file` de verdade e liberar o painel "Criar projeto". */
+  const [pendingCropFile, setPendingCropFile] = useState<File | null>(null);
   const [showCreatePanel, setShowCreatePanel] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [gridWidth, setGridWidth] = useState(0);
-  const [gridHeight, setGridHeight] = useState(0);
-  const [colors, setColors] = useState<string[] | null>(null);
+  const [gridWidth, setGridWidth] = useState(() => draftData?.gridWidth ?? 0);
+  const [gridHeight, setGridHeight] = useState(() => draftData?.gridHeight ?? 0);
+  const [colors, setColors] = useState<string[] | null>(() => draftData?.colors ?? null);
   /** Se a grade atual ja esta no tamanho real (1 celula = 1cm). Comeca falsa
    * (grade pequena de trabalho, "sem 1 0", rapida pra taquear/editar) — so
    * vira real quando o usuario liga a grade de folhas/tacos ou salva. */
-  const [isRealScale, setIsRealScale] = useState(false);
+  const [isRealScale, setIsRealScale] = useState(() => draftData?.isRealScale ?? false);
 
-  const [targetColorCount, setTargetColorCount] = useState(16);
+  const [targetColorCount, setTargetColorCount] = useState(() => draftData?.targetColorCount ?? 16);
   const [reducing, setReducing] = useState(false);
 
   const [selectedColor, setSelectedColor] = useState<string | null>(null);
@@ -104,7 +118,7 @@ export function BandeiraWorkspace() {
   /** Tamanho do taco (cm) usado so pra calcular a contagem de tacos/folhas
    * por cor (aba Contagem de folha) — independente do fator fixo de
    * expansao da grade (CM_POR_PIXEL), que nunca muda. */
-  const [tacoSizeCm, setTacoSizeCm] = useState(CM_POR_PIXEL);
+  const [tacoSizeCm, setTacoSizeCm] = useState(() => draftData?.tacoSizeCm ?? CM_POR_PIXEL);
 
   const [divisionMode, setDivisionMode] = useState<BandeiraDivisionMode>('inteira');
   /** Independentes do toggle de preview da aba Grades — o PDF e um guia de
@@ -116,7 +130,7 @@ export function BandeiraWorkspace() {
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [showEmailModal, setShowEmailModal] = useState(false);
 
-  const [nome, setNome] = useState('');
+  const [nome, setNome] = useState(() => draftData?.nome ?? '');
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -152,10 +166,6 @@ export function BandeiraWorkspace() {
     return `rgba(${r}, ${g}, ${b}, 0.35)`;
   }, [fineGridColor]);
 
-  useEffect(() => {
-    workingColorsRef.current = colors ? colors.slice() : null;
-  }, [colors]);
-
   /** Calcula um zoom que faz a grade inteira caber na area visivel do palco,
    * pra nao comecar com uma imagem minuscula perdida num fundo preto gigante. */
   const fitZoomToStage = useCallback((widthPx: number, heightPx: number) => {
@@ -172,6 +182,36 @@ export function BandeiraWorkspace() {
     const snapped = fit >= 5 ? Math.floor(fit / 5) * 5 : fit;
     setZoom(Math.max(ZOOM_MIN, Math.round(snapped * 100) / 100));
   }, []);
+
+  useEffect(() => {
+    workingColorsRef.current = colors ? colors.slice() : null;
+  }, [colors]);
+
+  // Hook de Auto-salvamento do rascunho local da bandeira
+  useEffect(() => {
+    if (!colors || gridWidth === 0 || gridHeight === 0) return;
+    try {
+      const draft = {
+        colors,
+        gridWidth,
+        gridHeight,
+        larguraCm,
+        alturaCm,
+        nome,
+        isRealScale,
+        targetColorCount,
+        tacoSizeCm
+      };
+      window.localStorage.setItem('sistema-novo:draft:bandeira', JSON.stringify(draft));
+    } catch {}
+  }, [colors, gridWidth, gridHeight, larguraCm, alturaCm, nome, isRealScale, targetColorCount, tacoSizeCm]);
+
+  // Restaurar zoom inicial na montagem caso o rascunho seja carregado
+  useEffect(() => {
+    if (draftData?.gridWidth && draftData?.gridHeight) {
+      requestAnimationFrame(() => fitZoomToStage(draftData.gridWidth, draftData.gridHeight));
+    }
+  }, [fitZoomToStage]);
 
   const gridSize = useMemo(
     () => computeGridSize(Number(larguraCm) || 0, Number(alturaCm) || 0),
@@ -295,6 +335,34 @@ export function BandeiraWorkspace() {
       setShowCreatePanel(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nao foi possivel taquear a imagem.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /** Importa um projeto pronto (imagem ou JSON) diretamente sem passar por
+   * tamanho ou taqueamento de cores. Exibe direto as cores na tabela. */
+  async function handleImportReadyProject(importedFile: File) {
+    if (loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      if (importedFile.name.endsWith('.json')) {
+        const text = await importedFile.text();
+        const project = JSON.parse(text);
+        if (project.gridWidth && project.gridHeight && Array.isArray(project.colors)) {
+          applyGridResult({ widthPx: project.gridWidth, heightPx: project.gridHeight }, project.colors);
+          if (project.nome) setNome(project.nome);
+          setShowCreatePanel(false);
+          return;
+        }
+      }
+
+      const grid = await readBandeiraNativePixelGrid(importedFile);
+      applyGridResult(grid, grid.colors);
+      setShowCreatePanel(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Nao foi possivel importar o projeto pronto.');
     } finally {
       setLoading(false);
     }
@@ -572,14 +640,35 @@ export function BandeiraWorkspace() {
 
   const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const next = event.target.files?.[0] ?? null;
-    setFile(next);
     setError(null);
     setShowCreatePanel(false);
     // o tamanho fica em branco de proposito — o usuario tem que digitar o
     // tamanho real da bandeira, nunca fica com um valor sugerido por engano.
     setLarguraCm('');
     setAlturaCm('');
+    setFile(null);
+    // antes de liberar o "Criar projeto", abre o recorte — so vira `file` de
+    // verdade depois que o usuario confirma o recorte (ou escolhe usar a
+    // imagem inteira). Imagem grande demais pra bandeira pode ser recortada
+    // aqui antes de escolher tamanho/cores.
+    setPendingCropFile(next);
   }, []);
+
+  function handleCropConfirm(croppedFile: File) {
+    setFile(croppedFile);
+    setPendingCropFile(null);
+  }
+
+  function handleCropUseWhole() {
+    setFile(pendingCropFile);
+    setPendingCropFile(null);
+  }
+
+  function handleCropCancel() {
+    setPendingCropFile(null);
+    setFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
 
   /** Monta o PDF (capa com tabela de cores numerada + folha inteira/dividida)
    * sempre no tamanho real, mesmo que a edicao tenha ficado na grade pequena
@@ -630,6 +719,13 @@ export function BandeiraWorkspace() {
     }, 30);
   }
 
+  function handleDownloadPng() {
+    const canvas = canvasRef.current;
+    if (!canvas || !colors) return;
+    const filename = `${slugifyFilename(nome || 'bandeira')}.png`;
+    downloadCanvasAsPng(canvas, filename);
+  }
+
   return (
     <div className="bandeira-workspace">
       <div className="bandeira-main-panel">
@@ -640,7 +736,27 @@ export function BandeiraWorkspace() {
 
         {!colors ? (
           <div className="bandeira-upload-card">
-            <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="bandeira-file-input" />
+            <div className="bandeira-import-options-row">
+              <label className="mold-save-button bandeira-upload-label">
+                <ImagePlus size={16} />
+                {file ? `Imagem: ${file.name}` : 'Escolher imagem para taquear'}
+                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="bandeira-file-input" />
+              </label>
+
+              <label className="mold-secondary-button bandeira-upload-label" title="Pula tamanho e quantidade de cores — abre direto a tabela de cores pra editar">
+                <FolderOpen size={16} />
+                Importar Projeto Pronto
+                <input
+                  type="file"
+                  accept="image/*,.json"
+                  onChange={(e) => {
+                    const selected = e.target.files?.[0];
+                    if (selected) void handleImportReadyProject(selected);
+                  }}
+                  className="bandeira-file-input"
+                />
+              </label>
+            </div>
 
             {error ? <p className="mold-import-error">{error}</p> : null}
 
@@ -698,19 +814,6 @@ export function BandeiraWorkspace() {
                     — os valores ja preenchidos acima.
                   </p>
                 )}
-                {exceedsLimit ? (
-                  <p className="mold-import-error">
-                    Grade grande demais (maximo {MAX_GRID_SIDE}px de lado ou {MAX_GRID_CELLS} pixels no total). Reduza
-                    o tamanho.
-                  </p>
-                ) : null}
-                {exceedsExpandedLimit ? (
-                  <p className="mold-import-error">
-                    Bandeira grande demais no tamanho real (maximo {MAX_EXPANDED_CELLS.toLocaleString('pt-BR')} cm² no
-                    total). Reduza o tamanho.
-                  </p>
-                ) : null}
-
                 <label className="auth-field">
                   <span>Quantidade de cores desejada</span>
                   <input type="number" min={2} {...numericFieldProps(targetColorCount, setTargetColorCount, 2)} />
@@ -721,7 +824,7 @@ export function BandeiraWorkspace() {
                   type="button"
                   className="mold-save-button"
                   onClick={() => void handleCreateProject()}
-                  disabled={!larguraCm || !alturaCm || exceedsLimit || exceedsExpandedLimit || loading}
+                  disabled={!larguraCm || !alturaCm || loading}
                 >
                   {loading ? <Loader2 size={16} className="mold-import-spinner" /> : <ImagePlus size={16} />}
                   {loading ? 'Taqueando...' : 'Taquear imagem'}
@@ -732,7 +835,7 @@ export function BandeiraWorkspace() {
         ) : (
           <>
             <div className="bandeira-toolbar">
-              <div className="bandeira-toolbar-group">
+              <div className="bandeira-toolbar-group bandeira-tools-group">
                 <button
                   type="button"
                   className={tool === 'mover' ? 'active' : ''}
@@ -804,7 +907,12 @@ export function BandeiraWorkspace() {
                 type="button"
                 className="mold-import-button"
                 onClick={() => {
+                  try {
+                    window.localStorage.removeItem('sistema-novo:draft:bandeira');
+                  } catch {}
                   setColors(null);
+                  setGridWidth(0);
+                  setGridHeight(0);
                   setFile(null);
                   setShowCreatePanel(false);
                   if (fileInputRef.current) fileInputRef.current.value = '';
@@ -835,6 +943,9 @@ export function BandeiraWorkspace() {
             <button type="button" className={sidebarTab === 'cores' ? 'active' : ''} onClick={() => setSidebarTab('cores')}>
               Cores
             </button>
+            <button type="button" className={sidebarTab === 'tamanho' ? 'active' : ''} onClick={() => setSidebarTab('tamanho')}>
+              Tamanho
+            </button>
             <button type="button" className={sidebarTab === 'numerar' ? 'active' : ''} onClick={() => setSidebarTab('numerar')}>
               Numerar
             </button>
@@ -849,7 +960,7 @@ export function BandeiraWorkspace() {
             </button>
           </div>
 
-          {sidebarTab === 'cores' ? (
+          {sidebarTab === 'tamanho' ? (
             <>
               <h3>Tamanho da bandeira (pixel)</h3>
               <div className="bandeira-resize-row">
@@ -908,7 +1019,11 @@ export function BandeiraWorkspace() {
                 {loading ? <Loader2 size={15} className="mold-import-spinner" /> : null}
                 Atualizar tamanho
               </button>
+            </>
+          ) : null}
 
+          {sidebarTab === 'cores' ? (
+            <>
               <h3>Reduzir cores</h3>
               <div className="bandeira-reduce-row">
                 <input
@@ -1154,6 +1269,10 @@ export function BandeiraWorkspace() {
                 {downloadingPdf ? <Loader2 size={16} className="mold-import-spinner" /> : <Download size={16} />}
                 {downloadingPdf ? 'Gerando PDF...' : 'Baixar PDF'}
               </button>
+              <button type="button" className="mold-secondary-button" onClick={handleDownloadPng}>
+                <FileImage size={16} />
+                Baixar Imagem (PNG)
+              </button>
               <button type="button" className="mold-secondary-button" onClick={() => setShowEmailModal(true)}>
                 <Send size={16} />
                 Enviar por email
@@ -1173,6 +1292,95 @@ export function BandeiraWorkspace() {
           onClose={() => setShowEmailModal(false)}
         />
       ) : null}
+
+      {pendingCropFile ? (
+        <ImageCropModal
+          file={pendingCropFile}
+          onConfirm={handleCropConfirm}
+          onUseWhole={handleCropUseWhole}
+          onCancel={handleCropCancel}
+        />
+      ) : null}
+
+      {colors && (
+        <nav className="bandeira-mobile-bottom-bar" aria-label="Navegação inferior móvel">
+          <button
+            type="button"
+            className={`mobile-bar-btn ${tool === 'mover' ? 'active' : ''}`}
+            onClick={() => setTool('mover')}
+            title="Ferramenta Mover"
+          >
+            <Hand size={18} />
+            <span>Mover</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-bar-btn ${tool === 'lapis' ? 'active' : ''}`}
+            onClick={() => setTool('lapis')}
+            title="Ferramenta Lápis"
+          >
+            <Pencil size={18} />
+            <span>Lápis</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-bar-btn ${tool === 'contagotas' ? 'active' : ''}`}
+            onClick={() => setTool('contagotas')}
+            title="Conta-gotas"
+          >
+            <Droplet size={18} />
+            <span>Gotas</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-bar-btn ${sidebarTab === 'cores' ? 'active' : ''}`}
+            onClick={() => {
+              setSidebarTab('cores');
+              document.querySelector('.bandeira-side-panel')?.scrollIntoView({ behavior: 'smooth' });
+            }}
+            title="Aba de Cores"
+          >
+            <Palette size={18} />
+            <span>Cores</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-bar-btn ${sidebarTab === 'numerar' ? 'active' : ''}`}
+            onClick={() => {
+              setSidebarTab('numerar');
+              document.querySelector('.bandeira-side-panel')?.scrollIntoView({ behavior: 'smooth' });
+            }}
+            title="Aba Numerar"
+          >
+            <Hash size={18} />
+            <span>Numerar</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-bar-btn ${sidebarTab === 'grades' ? 'active' : ''}`}
+            onClick={() => {
+              setSidebarTab('grades');
+              document.querySelector('.bandeira-side-panel')?.scrollIntoView({ behavior: 'smooth' });
+            }}
+            title="Aba Grades"
+          >
+            <Grid3x3 size={18} />
+            <span>Grades</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-bar-btn ${sidebarTab === 'dividir' || sidebarTab === 'contagem' ? 'active' : ''}`}
+            onClick={() => {
+              setSidebarTab('dividir');
+              document.querySelector('.bandeira-side-panel')?.scrollIntoView({ behavior: 'smooth' });
+            }}
+            title="Aba Exportar"
+          >
+            <Layers size={18} />
+            <span>Exportar</span>
+          </button>
+        </nav>
+      )}
     </div>
   );
 }

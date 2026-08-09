@@ -87,13 +87,19 @@ final class PlanoController
     }
 
     /**
-     * @return array{errors?: array<string,string>, data?: array{nome:string, valor:float, dias_acesso:int}}
+     * @return array{errors?: array<string,string>, data?: array{nome:string, valor:float, dias_acesso:int, abas:array<int,string>|null, show_in_ranking:bool, sales_override_count:int}}
      */
     private function validatePayload(Request $request): array
     {
         $nome = trim((string) $request->input('nome', ''));
         $valor = $request->input('valor');
         $diasAcesso = $request->input('dias_acesso');
+        // Igual nome/valor/dias_acesso: essa API nao faz update parcial, o
+        // form sempre reenvia o estado completo do checklist. Ausente ou
+        // null = "todas as abas" (mesmo default de um plano recem-criado).
+        $abasInput = $request->input('abas');
+        $showInRanking = (bool) $request->input('show_in_ranking', false);
+        $salesOverrideCount = (int) $request->input('sales_override_count', 0);
 
         $errors = [];
 
@@ -111,6 +117,19 @@ final class PlanoController
             $errors['dias_acesso'] = 'Informe uma quantidade de dias entre 1 e 3650.';
         }
 
+        $abas = null;
+        if ($abasInput !== null) {
+            if (!is_array($abasInput) || array_filter($abasInput, static fn ($v) => !is_string($v)) !== []) {
+                $errors['abas'] = 'Lista de abas invalida.';
+            } else {
+                $validas = array_values(array_intersect($abasInput, PlanoService::ALL_ABAS));
+                // Marcou todas as abas conhecidas = mesma coisa que "sem restricao"
+                // (null) -- fica pronto pra novas abas que vierem a existir depois
+                // sem precisar editar o plano de novo.
+                $abas = count($validas) === count(PlanoService::ALL_ABAS) ? null : $validas;
+            }
+        }
+
         if ($errors !== []) {
             return ['errors' => $errors];
         }
@@ -120,6 +139,9 @@ final class PlanoController
                 'nome' => $nome,
                 'valor' => round((float) $valor, 2),
                 'dias_acesso' => (int) $diasAcesso,
+                'abas' => $abas,
+                'show_in_ranking' => $showInRanking,
+                'sales_override_count' => $salesOverrideCount,
             ],
         ];
     }

@@ -48,6 +48,32 @@ final class SystemSettingsController
             }
         }
 
+        $navItemLabels = $request->input('nav_item_labels');
+        if ($navItemLabels !== null) {
+            if (!is_array($navItemLabels)) {
+                $errors['nav_item_labels'] = 'Rotulos de aba invalidos.';
+            } else {
+                $clean = [];
+                foreach ($navItemLabels as $key => $value) {
+                    if (!is_string($key) || !is_string($value)) {
+                        $errors['nav_item_labels'] = 'Rotulos de aba invalidos.';
+                        break;
+                    }
+                    $trimmed = trim($value);
+                    if (mb_strlen($trimmed) > 40) {
+                        $errors['nav_item_labels'] = 'Rotulo muito longo (max. 40 caracteres).';
+                        break;
+                    }
+                    if ($trimmed !== '') {
+                        $clean[$key] = $trimmed;
+                    }
+                }
+                if (!isset($errors['nav_item_labels'])) {
+                    $data['nav_item_labels'] = $clean;
+                }
+            }
+        }
+
         if ($request->input('mercado_pago_public_key') !== null) {
             $value = trim((string) $request->input('mercado_pago_public_key'));
             if (mb_strlen($value) > 255) {
@@ -59,6 +85,38 @@ final class SystemSettingsController
 
         if ($request->input('mercado_pago_access_token') !== null) {
             $data['mercado_pago_access_token'] = trim((string) $request->input('mercado_pago_access_token'));
+        }
+
+        $tutorials = $request->input('tutorials');
+        if ($tutorials !== null) {
+            if (!is_array($tutorials)) {
+                $errors['tutorials'] = 'Tutoriais inválidos.';
+            } else {
+                $clean = [];
+                foreach ($tutorials as $key => $value) {
+                    if (!is_string($key)) {
+                        $errors['tutorials'] = 'Identificador da aba inválido.';
+                        break;
+                    }
+                    if (!is_array($value)) {
+                        $errors['tutorials'] = 'Configuração do tutorial inválida.';
+                        break;
+                    }
+                    $show = !empty($value['show']);
+                    $videoUrl = trim((string) ($value['video_url'] ?? ''));
+                    if (mb_strlen($videoUrl) > 500) {
+                        $errors['tutorials'] = 'O link do vídeo é muito longo.';
+                        break;
+                    }
+                    $clean[$key] = [
+                        'show' => $show,
+                        'video_url' => $videoUrl
+                    ];
+                }
+                if (!isset($errors['tutorials'])) {
+                    $data['tutorials'] = $clean;
+                }
+            }
         }
 
         if ($errors !== []) {

@@ -6,6 +6,9 @@ import { AdminUsersPage } from './pages/AdminUsersPage';
 import { AdminSocialPage } from './pages/AdminSocialPage';
 import { AdminTabsPage } from './pages/AdminTabsPage';
 import { AdminPlanoPage } from './pages/AdminPlanoPage';
+import { AdminLojaPage } from './pages/AdminLojaPage';
+import { AdminComunicadosPage } from './pages/AdminComunicadosPage';
+import { AdminNotificacoesPage } from './pages/AdminNotificacoesPage';
 
 export function App() {
   const { user, isLoading } = useAuth();
@@ -31,6 +34,9 @@ export function App() {
           if (activeId === 'admin-redes-sociais') return <AdminSocialPage />;
           if (activeId === 'admin-abas') return <AdminTabsPage />;
           if (activeId === 'admin-plano') return <AdminPlanoPage />;
+          if (activeId === 'admin-loja') return <AdminLojaPage />;
+          if (activeId === 'admin-notificacoes') return <AdminNotificacoesPage />;
+          if (activeId === 'admin-comunicacao') return <AdminComunicadosPage />;
           return null;
         }}
       />

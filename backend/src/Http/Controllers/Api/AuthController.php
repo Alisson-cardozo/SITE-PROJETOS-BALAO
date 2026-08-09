@@ -9,6 +9,7 @@ use App\Core\Response;
 use App\Services\AuthTokenService;
 use App\Services\UserService;
 use App\Support\Password;
+use App\Support\Db;
 
 final class AuthController
 {
@@ -46,10 +47,25 @@ final class AuthController
         }
 
         $user = $this->users->create($name, $email, $password);
-        $token = $this->tokens->issue((int) $user['id']);
+        $userAgent = $request->headers['user-agent'] ?? 'Unknown Device';
+        $token = $this->tokens->issue((int) $user['id'], mb_strimwidth((string)$userAgent, 0, 255));
+
+        $tokenHash = hash('sha256', $token);
+        Db::connection()->prepare(
+            'UPDATE users SET 
+                active_session_id = :session_id,
+                session_device = :device,
+                session_created_at = NOW(),
+                last_activity = NOW()
+             WHERE id = :id'
+        )->execute([
+            'session_id' => $tokenHash,
+            'device' => mb_strimwidth((string)$userAgent, 0, 255),
+            'id' => (int) $user['id']
+        ]);
 
         return Response::json([
-            'user' => $this->users->toPublicArray($user),
+            'user' => $this->users->toPublicArray($this->users->findById((int) $user['id'])),
             'token' => $token,
         ], 201);
     }
@@ -75,10 +91,45 @@ final class AuthController
             return Response::json(['error' => 'Seu acesso expirou. Fale com o administrador.'], 403);
         }
 
-        $token = $this->tokens->issue((int) $user['id']);
+        // Check if there is an active session (activity within the last 60 seconds)
+        // Check if there are 2 or more active sessions (activity within the last 60 seconds)
+        $activeCountStmt = Db::connection()->prepare(
+            'SELECT COUNT(*) FROM api_tokens 
+             WHERE user_id = :user_id 
+               AND last_used_at > :threshold 
+               AND (expires_at IS NULL OR expires_at > NOW())'
+        );
+        $activeCountStmt->execute([
+            'user_id' => $user['id'],
+            'threshold' => date('Y-m-d H:i:s', time() - 60)
+        ]);
+        $activeCount = (int) $activeCountStmt->fetchColumn();
+
+        if ($activeCount >= 2) {
+            return Response::json([
+                'error' => 'Esta conta já está sendo utilizada no limite máximo de 2 dispositivos simultâneos.'
+            ], 409); // 409 Conflict
+        }
+
+        $userAgent = $request->headers['user-agent'] ?? 'Unknown Device';
+        $token = $this->tokens->issue((int) $user['id'], mb_strimwidth((string)$userAgent, 0, 255));
+
+        $tokenHash = hash('sha256', $token);
+        Db::connection()->prepare(
+            'UPDATE users SET 
+                active_session_id = :session_id,
+                session_device = :device,
+                session_created_at = NOW(),
+                last_activity = NOW()
+             WHERE id = :id'
+        )->execute([
+            'session_id' => $tokenHash,
+            'device' => mb_strimwidth((string)$userAgent, 0, 255),
+            'id' => (int) $user['id']
+        ]);
 
         return Response::json([
-            'user' => $this->users->toPublicArray($user),
+            'user' => $this->users->toPublicArray($this->users->findById((int) $user['id'])),
             'token' => $token,
         ]);
     }
@@ -154,7 +205,40 @@ final class AuthController
         $token = $request->bearerToken();
         if ($token !== null) {
             $this->tokens->revoke($token);
+
+            $tokenHash = hash('sha256', $token);
+            Db::connection()->prepare(
+                'UPDATE users SET 
+                    active_session_id = NULL,
+                    session_device = NULL,
+                    last_activity = NULL
+                 WHERE active_session_id = :hash'
+            )->execute(['hash' => $tokenHash]);
         }
+
+        return Response::json(['ok' => true]);
+    }
+
+    public function heartbeat(Request $request): Response
+    {
+        $userId = (int) $request->attribute('user_id');
+        $token = $request->bearerToken();
+        if ($token === null) {
+            return Response::json(['error' => 'Nao autenticado.'], 401);
+        }
+
+        $tokenHash = hash('sha256', $token);
+
+        Db::connection()->prepare(
+            'UPDATE users SET last_activity = NOW() WHERE id = :id'
+        )->execute(['id' => $userId]);
+
+        Db::connection()->prepare(
+            'UPDATE api_tokens SET last_used_at = NOW() WHERE user_id = :user_id AND token_hash = :hash'
+        )->execute([
+            'user_id' => $userId,
+            'hash' => $tokenHash
+        ]);
 
         return Response::json(['ok' => true]);
     }

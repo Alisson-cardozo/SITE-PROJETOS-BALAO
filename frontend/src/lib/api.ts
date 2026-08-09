@@ -2,7 +2,15 @@ import type {
   AuthResponse,
   BandeiraPayload,
   BandeiraSummary,
+  Comunicado,
+  Notificacao,
   ImportedMoldData,
+  LanternaProject,
+  LanternaProjectPayload,
+  LojaPagamento,
+  LojaProdutoAdmin,
+  LojaProdutoPayload,
+  LojaProdutoPublic,
   Modelo3D,
   Modelo3DPayload,
   MoldDetail,
@@ -19,7 +27,10 @@ import type {
   RifaDetail,
   RifaPromocao,
   RifaReservaResponse,
+  RiscadoProject,
+  RiscadoProjectPayload,
   SystemSettings,
+  TutorialConfig,
   User,
   UserStatus,
 } from '../types';
@@ -82,13 +93,36 @@ export const api = {
   changeEmail: (payload: { current_password: string; new_email: string }, token: string) =>
     request<{ user: User }>('/auth/email', { method: 'PUT', body: payload, token }),
   logout: (token: string) => request<{ ok: boolean }>('/auth/logout', { method: 'POST', token }),
-  adminListUsers: (token: string) => request<{ data: User[] }>('/admin/users', { token }),
+  adminListUsers: (token: string) =>
+    request<{
+      data: User[];
+      stats: {
+        total: number;
+        active: number;
+        expired: number;
+        pending: number;
+        blocked: number;
+        monthly_billing: number;
+      };
+    }>('/admin/users', { token }),
   adminUpdateUserStatus: (id: number, status: 'active' | 'blocked', token: string) =>
     request<{ data: User }>(`/admin/users/${id}/status`, { method: 'PUT', body: { status }, token }),
-  adminGrantAccess: (id: number, days: number, token: string) =>
-    request<{ data: User }>(`/admin/users/${id}/grant-access`, { method: 'PUT', body: { days }, token }),
+  adminGrantAccess: (id: number, days: number, token: string, planoId?: number | null) =>
+    request<{ data: User }>(`/admin/users/${id}/grant-access`, {
+      method: 'PUT',
+      body: planoId !== undefined ? { days, plano_id: planoId } : { days },
+      token,
+    }),
+  adminRevokeAccess: (id: number, token: string) =>
+    request<{ data: User }>(`/admin/users/${id}/revoke-access`, { method: 'PUT', token }),
   adminDeleteUser: (id: number, token: string) =>
     request<{ ok: boolean }>(`/admin/users/${id}`, { method: 'DELETE', token }),
+  adminUpdateUserPassword: (id: number, payload: { password: string; password_confirmation: string }, token: string) =>
+    request<{ ok: boolean }>(`/admin/users/${id}/password`, { method: 'PUT', body: payload, token }),
+  heartbeat: (token: string) =>
+    request<{ ok: boolean }>('/auth/heartbeat', { method: 'POST', token }),
+  adminRevokeSession: (id: number, token: string) =>
+    request<{ ok: boolean }>(`/admin/users/${id}/revoke-session`, { method: 'POST', token }),
   getSystemSettings: (token: string) => request<{ data: SystemSettings }>('/system-settings', { token }),
   adminUpdateSystemSettings: (
     payload: Partial<{
@@ -96,8 +130,10 @@ export const api = {
       instagram: string;
       whatsapp: string;
       hidden_nav_items: string[];
+      nav_item_labels: Record<string, string>;
       mercado_pago_public_key: string;
       mercado_pago_access_token: string;
+      tutorials: Record<string, TutorialConfig>;
     }>,
     token: string
   ) => request<{ data: SystemSettings }>('/admin/system-settings', { method: 'PUT', body: payload, token }),
@@ -111,8 +147,25 @@ export const api = {
   adminDeletePlano: (id: number, token: string) =>
     request<{ ok: boolean }>(`/admin/planos/${id}`, { method: 'DELETE', token }),
   listPlanos: (token: string) => request<{ data: PlanoPublic[] }>('/planos', { token }),
+  listPublicPlanos: () => request<{ data: PlanoPublic[] }>('/public/planos'),
   createPagamento: (planoId: number, token: string) =>
     request<{ data: Pagamento }>('/plano/pagamentos', { method: 'POST', body: { plano_id: planoId }, token }),
+  createPagamentoCartao: (
+    payload: {
+      plano_id: number;
+      token: string;
+      payment_method_id: string;
+      installments: number;
+      issuer_id?: number | null;
+      device_id?: string | null;
+      identification?: { type: string; number: string } | null;
+    },
+    token: string
+  ) =>
+    request<{ data: Pagamento; user: { status: UserStatus; access_expires_at: string | null } | null }>(
+      '/plano/pagamentos/cartao',
+      { method: 'POST', body: payload, token }
+    ),
   getPagamento: (id: number, token: string) =>
     request<{ data: Pagamento; user: { status: UserStatus; access_expires_at: string | null } | null }>(
       `/plano/pagamentos/${id}`,
@@ -145,6 +198,27 @@ export const api = {
     request<{ data: MoldProjectSummary }>(`/projects/${id}`, { method: 'PUT', body: payload, token }),
   deleteProject: (id: number, token: string) =>
     request<{ ok: boolean }>(`/projects/${id}`, { method: 'DELETE', token }),
+  listRiscadoProjects: (token: string) =>
+    request<{ data: RiscadoProject[] }>('/riscado-projects', { token }),
+  getRiscadoProject: (id: number, token: string) =>
+    request<{ data: RiscadoProject }>(`/riscado-projects/${id}`, { token }),
+  createRiscadoProject: (payload: RiscadoProjectPayload, token: string) =>
+    request<{ data: RiscadoProject }>('/riscado-projects', { method: 'POST', body: payload, token }),
+  updateRiscadoProject: (id: number, payload: Partial<RiscadoProjectPayload> & { state: RiscadoProject['state'] }, token: string) =>
+    request<{ data: RiscadoProject }>(`/riscado-projects/${id}`, { method: 'PUT', body: payload, token }),
+  deleteRiscadoProject: (id: number, token: string) =>
+    request<{ ok: boolean }>(`/riscado-projects/${id}`, { method: 'DELETE', token }),
+
+  listLanternaProjects: (token: string) =>
+    request<{ data: LanternaProject[] }>('/lanterna-projects', { token }),
+  getLanternaProject: (id: number, token: string) =>
+    request<{ data: LanternaProject }>(`/lanterna-projects/${id}`, { token }),
+  createLanternaProject: (payload: LanternaProjectPayload, token: string) =>
+    request<{ data: LanternaProject }>('/lanterna-projects', { method: 'POST', body: payload, token }),
+  updateLanternaProject: (id: number, payload: Partial<LanternaProjectPayload> & { state: LanternaProject['state'] }, token: string) =>
+    request<{ data: LanternaProject }>(`/lanterna-projects/${id}`, { method: 'PUT', body: payload, token }),
+  deleteLanternaProject: (id: number, token: string) =>
+    request<{ ok: boolean }>(`/lanterna-projects/${id}`, { method: 'DELETE', token }),
   listBandeiras: (token: string) => request<{ data: BandeiraSummary[] }>('/bandeiras', { token }),
   getBandeira: (id: number, token: string) => request<{ data: BandeiraSummary }>(`/bandeiras/${id}`, { token }),
   createBandeira: (payload: BandeiraPayload, token: string) =>
@@ -209,6 +283,54 @@ export const api = {
     request<{ data: { status: string; numeros: number[] } }>(`/public/rifas/compradores/${compradorId}/status`),
   getMeusNumeros: (slug: string, whatsapp: string) =>
     request<{ data: { numeros: number[] } }>(`/public/rifas/${slug}/meus-numeros?whatsapp=${encodeURIComponent(whatsapp)}`),
+
+  // Loja — admin (aba "Loja").
+  adminListLojaProdutos: (token: string) => request<{ data: LojaProdutoAdmin[] }>('/admin/loja/produtos', { token }),
+  adminGetLojaProduto: (id: number, token: string) =>
+    request<{ data: LojaProdutoAdmin }>(`/admin/loja/produtos/${id}`, { token }),
+  adminUpdateLojaProduto: (id: number, payload: LojaProdutoPayload, token: string) =>
+    request<{ data: LojaProdutoAdmin }>(`/admin/loja/produtos/${id}`, { method: 'PUT', body: payload, token }),
+  adminDeleteLojaProduto: (id: number, token: string) =>
+    request<{ ok: boolean }>(`/admin/loja/produtos/${id}`, { method: 'DELETE', token }),
+
+  // Loja — vitrine publica (/loja), sem token, o comprador nunca faz login.
+  listLojaProdutosPublic: () => request<{ data: LojaProdutoPublic[] }>('/public/loja/produtos'),
+  getLojaProdutoPublic: (id: number) => request<{ data: LojaProdutoPublic }>(`/public/loja/produtos/${id}`),
+  comprarLojaProduto: (id: number, email: string) =>
+    request<{ data: LojaPagamento }>(`/public/loja/produtos/${id}/comprar`, { method: 'POST', body: { email } }),
+  getLojaPagamentoStatus: (id: number) => request<{ data: LojaPagamento }>(`/public/loja/pagamentos/${id}/status`),
+
+  // Comunicados / Comunicação
+  adminListComunicados: (token: string) =>
+    request<{ data: Comunicado[] }>('/admin/comunicados', { token }),
+  adminCreateComunicado: (payload: { titulo: string; conteudo: string; send_email_to: 'all' | 'selected'; emails?: string[] }, token: string) =>
+    request<{ data: Comunicado; email_stats: { sent: number; failed: number } }>('/admin/comunicados', {
+      method: 'POST',
+      body: payload,
+      token,
+    }),
+  getPendingComunicado: (token: string) =>
+    request<{ data: Comunicado | null }>('/comunicados/pending', { token }),
+  markComunicadoAsRead: (id: number, token: string) =>
+    request<{ ok: boolean }>(`/comunicados/${id}/read`, { method: 'POST', token }),
+
+  // Notificações do admin (histórico de vendas) + Web Push
+  adminListNotificacoes: (token: string) =>
+    request<{ data: Notificacao[] }>('/admin/notificacoes', { token }),
+  adminGetPendingNotificacoes: (token: string) =>
+    request<{ data: Notificacao[]; count: number }>('/admin/notificacoes/pending', { token }),
+  adminMarkNotificacaoRead: (id: number, token: string) =>
+    request<{ ok: boolean }>(`/admin/notificacoes/${id}/read`, { method: 'POST', token }),
+  adminMarkAllNotificacoesRead: (token: string) =>
+    request<{ ok: boolean }>('/admin/notificacoes/read-all', { method: 'POST', token }),
+  adminGetVapidPublicKey: (token: string) =>
+    request<{ data: { public_key: string } }>('/admin/push/vapid-public-key', { token }),
+  adminSubscribePush: (
+    payload: { endpoint: string; keys: { p256dh: string; auth: string } },
+    token: string
+  ) => request<{ ok: boolean }>('/admin/push/subscribe', { method: 'POST', body: payload, token }),
+  adminUnsubscribePush: (endpoint: string, token: string) =>
+    request<{ ok: boolean }>('/admin/push/unsubscribe', { method: 'POST', body: { endpoint }, token }),
 };
 
 /** Criacao de rifa manda texto + as 3 fotos juntos (multipart) — primeiro form
@@ -233,6 +355,30 @@ export async function createRifa(formData: FormData, token: string): Promise<Rif
   }
 
   return (data as { data: Rifa }).data;
+}
+
+/** Criacao de produto da Loja manda texto + as 4 imagens juntos (multipart)
+ * -- mesmo padrao de createRifa. */
+export async function createLojaProduto(formData: FormData, token: string): Promise<LojaProdutoAdmin> {
+  const response = await fetch(`${API_BASE}/admin/loja/produtos`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+
+  let data: unknown = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    const payload = (data ?? {}) as { error?: string; errors?: Record<string, string> };
+    throw new ApiError(payload.error ?? 'Nao foi possivel criar o produto.', response.status, payload.errors);
+  }
+
+  return (data as { data: LojaProdutoAdmin }).data;
 }
 
 export async function importMoldPdf(file: File, token: string): Promise<ImportedMoldData> {

@@ -35,8 +35,35 @@ export function RifasWorkspace() {
   const [rifas, setRifas] = useState<Rifa[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<'list' | 'create'>('list');
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  
+  const [view, setView] = useState<'list' | 'create'>(() => {
+    try {
+      const saved = window.localStorage.getItem('sistema-novo:rifa-workspace:view');
+      return (saved as 'list' | 'create') || 'list';
+    } catch {
+      return 'list';
+    }
+  });
+
+  const [selectedId, setSelectedId] = useState<number | null>(() => {
+    try {
+      const saved = window.localStorage.getItem('sistema-novo:rifa-workspace:selected-id');
+      return saved ? Number(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('sistema-novo:rifa-workspace:view', view);
+      if (selectedId !== null) {
+        window.localStorage.setItem('sistema-novo:rifa-workspace:selected-id', String(selectedId));
+      } else {
+        window.localStorage.removeItem('sistema-novo:rifa-workspace:selected-id');
+      }
+    } catch {}
+  }, [view, selectedId]);
 
   const load = useCallback(async () => {
     if (!token) return;

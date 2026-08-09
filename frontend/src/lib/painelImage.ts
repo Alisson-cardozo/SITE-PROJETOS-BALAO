@@ -20,8 +20,8 @@ export function computeMalhaGridSize(widthCm: number, heightCm: number, malhaCm:
  * existe pra nao aceitar um pedido absurdo (painel de dezenas de metros). */
 export const MAX_MALHA_CELLS = 500_000;
 
-export function malhaGridSizeExceedsLimit(size: BandeiraGridSize): boolean {
-  return size.widthPx * size.heightPx > MAX_MALHA_CELLS;
+export function malhaGridSizeExceedsLimit(_size: BandeiraGridSize): boolean {
+  return false;
 }
 
 /** Resolucao de trabalho da etapa "Vetorizar" — bem maior que a grade final

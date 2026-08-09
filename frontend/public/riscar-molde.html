@@ -1,0 +1,1634 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Riscar Molde — Globos de Molde</title>
+    <style>
+        *{box-sizing:border-box;margin:0;padding:0}
+        html,body{width:100%;height:100%;background:#1a1a1a;font-family:'Segoe UI',system-ui,sans-serif;color:#fff;overflow:hidden}
+
+        #header-bar{
+            height:56px;background:#222;display:flex;align-items:center;justify-content:space-between;
+            padding:0 14px;border-bottom:1px solid rgba(255,255,255,0.08);gap:10px;position:relative;z-index:50;
+        }
+        #header-left,#header-right{display:flex;align-items:center;gap:10px;min-width:0}
+        #header-right{flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
+        #header-model-name{
+            font-size:12px;font-weight:700;color:rgba(255,255,255,0.7);
+            max-width:min(220px,28vw);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+            padding:8px 12px;border-radius:999px;background:rgba(255,255,255,0.06);
+            border:1px solid rgba(255,255,255,0.08);
+        }
+
+        #model-picker{position:relative;width:100%}
+        #model-search-wrap{
+            display:flex;align-items:center;gap:8px;background:#333;border-radius:12px;
+            padding:0 14px;border:1px solid rgba(255,255,255,0.12);
+        }
+        #model-search-wrap span{font-size:13px;opacity:0.55}
+        #model-search{
+            flex:1;min-width:0;border:none;outline:none;background:transparent;
+            padding:11px 0;font-size:13px;font-weight:700;font-family:inherit;color:#fff;
+        }
+        #model-list{
+            position:absolute;top:calc(100% + 6px);left:0;width:100%;max-height:min(280px,42vh);
+            overflow-y:auto;background:#fff;border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,0.55);
+            display:none;z-index:300;
+        }
+        .model-item{padding:10px 14px;font-size:13px;font-weight:600;color:#222;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .model-item:hover,.model-item.active{background:#1abc9c;color:#fff}
+        .model-empty{color:#999;font-weight:400;cursor:default}
+        .category-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;font-size:13px;font-weight:600;color:#222;cursor:pointer;border-bottom:1px solid #eee}
+        .category-item:hover{background:#e8f8f5}
+        .category-count{flex-shrink:0;min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:linear-gradient(135deg,#16a085,#1abc9c);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
+        .model-back{padding:10px 14px;font-size:12px;font-weight:700;color:#e74c3c;cursor:pointer;border-bottom:1px solid #eee}
+        .model-field-label{font-size:12px;font-weight:700;color:rgba(255,255,255,0.65);margin-bottom:8px;display:block}
+        .model-current{margin-top:8px;font-size:11px;font-weight:600;color:rgba(255,255,255,0.4);line-height:1.35}
+        .model-current strong{color:#1abc9c;font-weight:800}
+
+        #layout{display:flex;height:calc(100% - 56px)}
+        #sidebar{
+            width:300px;flex-shrink:0;background:#1e1e1e;border-right:1px solid rgba(255,255,255,0.08);
+            padding:14px;overflow-y:auto;overflow-x:visible;display:flex;flex-direction:column;gap:12px;
+        }
+        .card{
+            background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);
+            border-radius:12px;padding:14px;
+        }
+        .card:first-child{overflow:visible;position:relative;z-index:30}
+        .card h3{
+            font-size:12px;font-weight:800;color:#1abc9c;text-transform:uppercase;letter-spacing:0.04em;
+            margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.06);
+        }
+        .field{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+        .field:last-child{margin-bottom:0}
+        .field label{font-size:12px;font-weight:600;color:rgba(255,255,255,0.65)}
+        .field .input-wrap{display:flex;align-items:center;gap:5px}
+        .field input[type=number]{
+            width:78px;padding:7px 9px;border-radius:8px;border:1px solid rgba(255,255,255,0.14);
+            background:rgba(255,255,255,0.06);color:#fff;font-weight:700;font-size:13px;outline:none;text-align:right;
+        }
+        .field input:focus{border-color:#1abc9c}
+        .field .unit{font-size:11px;color:rgba(255,255,255,0.4);font-weight:600;min-width:22px}
+        .field input[type=range]{flex:1;accent-color:#1abc9c}
+
+        .hint-box{
+            font-size:12px;line-height:1.5;color:rgba(255,255,255,0.55);
+            background:rgba(0,0,0,0.25);border-radius:8px;padding:10px;margin-top:10px;
+        }
+        .hint-box b{color:#1abc9c}
+
+        .action-btn{
+            width:100%;padding:11px;border:none;border-radius:10px;font-size:13px;font-weight:800;
+            cursor:pointer;color:#fff;margin-top:8px;
+        }
+        .action-btn:first-child{margin-top:0}
+        .action-btn.primary{background:linear-gradient(135deg,#16a085,#1abc9c)}
+        .action-btn.secondary{background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.12)}
+        .action-btn:hover{filter:brightness(1.08)}
+        .action-btn:disabled{opacity:0.4;cursor:not-allowed;filter:none}
+        #contour-tool-actions .action-btn{flex:1}
+
+        #ref-thumb-wrap{
+            display:none;align-items:center;gap:10px;padding:8px;border-radius:10px;
+            background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);margin-bottom:10px;
+        }
+        #ref-thumb{width:44px;height:44px;border-radius:6px;object-fit:cover;background:rgba(0,0,0,0.3);flex-shrink:0}
+        #ref-name{flex:1;min-width:0;font-size:12px;font-weight:600;color:rgba(255,255,255,0.8);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+        #workspace{
+            flex:1;min-width:0;position:relative;background:#c8c8c8;
+            overflow:hidden;cursor:default;
+        }
+        #stage{position:absolute;inset:0;transform-origin:0 0}
+        #lek-svg{width:100%;height:100%;display:block;touch-action:none}
+
+        #canvas-hud{
+            position:absolute;top:12px;left:12px;right:12px;display:flex;justify-content:space-between;
+            gap:10px;pointer-events:none;z-index:5;
+        }
+        #canvas-hud > *{pointer-events:auto}
+        .hud-pill{
+            background:rgba(20,20,20,0.82);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.12);
+            border-radius:12px;padding:8px 12px;font-size:12px;font-weight:700;color:rgba(255,255,255,0.8);
+        }
+        .zoom-btns{display:flex;gap:6px}
+        .zoom-btns button{
+            width:34px;height:34px;border-radius:10px;border:1px solid rgba(255,255,255,0.12);
+            background:rgba(20,20,20,0.82);color:#fff;font-weight:800;cursor:pointer;font-size:16px;
+        }
+        .zoom-btns button:hover{background:rgba(40,40,40,0.9)}
+
+        #bottom-hint{
+            position:absolute;bottom:12px;left:50%;transform:translateX(-50%);
+            background:rgba(20,20,20,0.8);color:rgba(255,255,255,0.7);font-size:12px;font-weight:600;
+            padding:8px 14px;border-radius:999px;border:1px solid rgba(255,255,255,0.1);
+            max-width:90%;text-align:center;z-index:5;pointer-events:none;
+        }
+
+        #empty-state{
+            position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+            flex-direction:column;gap:8px;text-align:center;padding:20px;pointer-events:none;
+        }
+        #empty-state.hide{display:none}
+        #empty-state strong{font-size:15px;color:rgba(0,0,0,0.55)}
+        #empty-state span{font-size:12px;color:rgba(0,0,0,0.4);max-width:320px}
+
+        @media (max-width:800px){
+            #layout{flex-direction:column}
+            #sidebar{width:100%;max-height:42vh;border-right:none;border-bottom:1px solid rgba(255,255,255,0.08)}
+        }
+    </style>
+</head>
+<body>
+
+<div id="header-bar">
+    <div id="header-left">
+        <span>Riscar Molde</span>
+    </div>
+    <div id="header-right">
+        <span id="header-model-name" title="Molde atual">—</span>
+    </div>
+</div>
+
+<div id="layout">
+    <aside id="sidebar">
+        <div class="card" id="card-image">
+            <h3>1. Imagem de referência</h3>
+            <div id="ref-thumb-wrap">
+                <img id="ref-thumb" alt="">
+                <span id="ref-name">—</span>
+            </div>
+            <input type="file" id="image-file-input" accept="image/*" style="display:none">
+            <button class="action-btn primary" id="btn-add-image">🖼 Enviar imagem do cliente</button>
+            <button class="action-btn secondary" id="btn-ai-align" style="display:none">🤖 Alinhar com IA</button>
+            <button class="action-btn secondary" id="btn-remove-image" style="display:none">🗑 Remover imagem</button>
+            <div id="ai-align-status" style="display:none;font-size:11px;color:rgba(255,255,255,0.5);line-height:1.4;margin-top:6px"></div>
+        </div>
+
+        <div class="card" id="card-contour">
+            <h3>2. Contorno (tamanho do cone)</h3>
+            <p style="font-size:12px;color:rgba(255,255,255,0.5);margin-bottom:10px;line-height:1.4">
+                Contorne a ponta e a boca do desenho — essa é a
+                <b style="color:#1abc9c">seleção</b> que define o tamanho
+                exato do cone. Clique pra marcar pontos retos, ou
+                <b style="color:#1abc9c">clique e arraste</b> pra fazer uma
+                curva. Clique no primeiro ponto de novo pra fechar.
+            </p>
+            <button class="action-btn secondary" id="btn-contour-ponta">✂ Contornar ponta (bico)</button>
+            <button class="action-btn secondary" id="btn-contour-boca">✂ Contornar boca</button>
+            <div id="contour-tool-actions" style="display:none;gap:8px;margin-top:8px;flex-wrap:wrap">
+                <button class="action-btn secondary" id="btn-contour-undo" style="margin-top:0">↺ Voltar ponto</button>
+                <button class="action-btn primary" id="btn-contour-finish" style="margin-top:0">✓ Fechar contorno</button>
+                <button class="action-btn secondary" id="btn-contour-cancel" style="margin-top:0">Cancelar</button>
+            </div>
+            <button class="action-btn secondary" id="btn-contour-clear" style="display:none">↺ Limpar contornos</button>
+        </div>
+
+        <div class="card" id="card-params" style="display:none">
+            <h3>3. Molde</h3>
+            <label class="model-field-label" for="model-search">Escolher molde</label>
+            <div id="model-picker">
+                <div id="model-search-wrap">
+                    <span>🔍</span>
+                    <input type="text" id="model-search" placeholder="Buscar ou abrir categorias..." autocomplete="off">
+                </div>
+                <div id="model-list"></div>
+            </div>
+            <div class="model-current">Molde: <strong id="model-current-name">—</strong></div>
+
+            <div class="field" style="margin-top:14px">
+                <label>Tamanho (altura)</label>
+                <div class="input-wrap">
+                    <input id="param-largo" type="number" value="300" min="10" step="any">
+                    <span class="unit">cm</span>
+                </div>
+            </div>
+            <div class="field">
+                <label>Qtd. de gomos (molde)</label>
+                <div class="input-wrap">
+                    <input id="param-gajos" type="number" value="16" min="4" max="199" step="1">
+                    <span class="unit">un</span>
+                </div>
+            </div>
+            <div class="field">
+                <label>Bainha</label>
+                <div class="input-wrap">
+                    <input id="param-bainha" type="number" value="1.0" min="0" max="50" step="any">
+                    <span class="unit">cm</span>
+                </div>
+            </div>
+            <button class="action-btn primary" id="btn-apply">Atualizar molde</button>
+        </div>
+
+        <div class="card" id="card-grid" style="display:none">
+            <h3>4. Grade do cone</h3>
+            <div class="field">
+                <label>Qtd. de gomos (cone)</label>
+                <div class="input-wrap">
+                    <input id="param-cone-n" type="number" value="8" min="1" max="48" step="1">
+                    <span class="unit">un</span>
+                </div>
+            </div>
+            <button class="action-btn primary" id="btn-build-cone">Gerar grade</button>
+
+            <div class="field" style="margin-top:12px">
+                <label>Opacidade</label>
+                <input id="grid-opacity" type="range" min="0.1" max="1" step="0.05" value="0.6">
+            </div>
+            <button class="action-btn secondary" id="btn-reset-grid">↺ Centralizar grade</button>
+            <div class="hint-box">
+                O cone fica <b>dentro da seleção</b> contornada. Se não
+                contornou uma metade, ela continua arrastável — puxe o
+                quadrado do canto pra redimensionar ou a bolinha de cima
+                pra girar.
+            </div>
+        </div>
+    </aside>
+
+    <main id="workspace">
+        <div id="canvas-hud">
+            <div class="hud-pill" id="hud-mode">Escolha um molde</div>
+            <div class="zoom-btns">
+                <button type="button" id="zoom-out" title="Afastar">−</button>
+                <button type="button" id="zoom-fit" title="Enquadrar">⊡</button>
+                <button type="button" id="zoom-in" title="Aproximar">+</button>
+            </div>
+        </div>
+        <div id="stage">
+            <svg id="lek-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+            <div id="empty-state">
+                <strong>Envie a imagem do cliente</strong>
+                <span>Depois contorne a ponta e a boca do desenho pra definir o tamanho do cone.</span>
+            </div>
+        </div>
+        <div id="bottom-hint">Arraste a grade para mover · canto para redimensionar · alça de cima para girar</div>
+    </main>
+</div>
+
+<script>
+// ================== ESTADO ==================
+let currentData = null;
+let allModels = [];
+let modelsByCategory = {};
+let currentCategory = null;
+let currentModelKey = '';
+let modelRaw = null;
+
+let moldPts = [];
+let coneN = 8;
+
+let view = { x: 0, y: 0, scale: 1 };
+
+// imagem de referência (fixa) — o que o cliente manda já pronto
+let refImage = null; // { src, natW, natH, name }
+
+// transform da ponta (topo) e da boca (base) — ajustadas SEPARADAS uma da
+// outra, já que a arte do cliente raramente respeita a proporção exata do
+// molde real entre as duas metades.
+let gridTTop = { x: 0, y: 0, scale: 1, rot: 0 };
+let gridTBot = { x: 0, y: 0, scale: 1, rot: 0 };
+let gridOpacity = 0.6;
+
+let currentTopLay = null;
+let currentBotLay = null;
+
+// Contorno manual (opcional) -- quando o cliente traca o contorno de uma
+// metade a mao, essa metade passa a usar o contorno (fatiado em N gomos a
+// partir do ponto mais alto) em vez do gridTTop/gridTBot arrastavel.
+let contourMode = null; // 'ponta' | 'boca' | null
+let contourPoints = []; // {x,y,handle:{dx,dy}|null}[] em coords do mundo, sendo tracado agora
+                         // handle = clicou-e-arrastou => vira ponto de curva (bezier, espelhado tipo Illustrator)
+let pontaContourPoly = null; // [x,y][] fechado, ou null se nao tracado
+let bocaContourPoly = null;
+
+// So mostra o cone depois que o cliente clicar em "Gerar grade" (passo 4)
+// -- antes disso a tela fica so com a imagem/contorno, sem antecipar nada.
+let gridGenerated = false;
+let dragMode = null; // 'move' | 'scale' | 'rotate' | 'pan'
+let dragTargetT = null;   // referência (gridTTop ou gridTBot) sendo arrastada
+let dragTargetLay = null;
+let isPointerDown = false;
+let dragStartWorld = null;
+let dragOrigGrid = null;
+let dragCenterWorld = null;
+let dragStartDist = 1;
+let dragStartScale = 1;
+let dragStartView = null;
+let dragStartPt = null;
+
+const CATEGORY_ORDER = ['Modelado','Piao','Bagda','Truffy','Careca','Golfier','Pigolbag','Lapidado','Hally','Barrica','Tangerina','Magico','Otros','Corte Recto'];
+const CATEGORY_RULES = [
+    ['Corte Recto', /corte.?ret[oa]/i],
+    ['Tangerina', /tangerin/i],
+    ['Barrica', /barrica/i],
+    ['Hally', /hally/i],
+    ['Lapidado', /lapidado/i],
+    ['Pigolbag', /pi[gn]ol?bag|pigobald|piglbag/i],
+    ['Golfier', /golfier/i],
+    ['Careca', /careca/i],
+    ['Bagda', /bagda/i],
+    ['Truffy', /truff/i],
+    ['Piao', /piao/i],
+    ['Magico', /magico/i],
+    ['Modelado', /modelado/i],
+];
+
+// ================== URL / NAV ==================
+function getModelKeyFromURL() {
+    const raw = window.location.search.replace(/^\?/, '');
+    if (!raw) return null;
+    for (const part of raw.split('&')) {
+        if (!part || part.startsWith('mode=')) continue;
+        if (part.startsWith('model=')) return decodeURIComponent(part.slice(6));
+        if (!part.includes('=')) return decodeURIComponent(part);
+    }
+    return null;
+}
+function updateURL(key) {
+    const base = window.location.pathname.endsWith('riscar-molde.html')
+        ? window.location.pathname
+        : (window.location.pathname.replace(/\/?$/, '/') + 'riscar-molde.html');
+    if (key) window.history.replaceState(null, '', base + '?' + encodeURIComponent(key));
+}
+function categorize(key) {
+    for (const [name, re] of CATEGORY_RULES) {
+        if (re.test(key)) return name;
+    }
+    return 'Otros';
+}
+
+function getParams() {
+    return {
+        Largo: parseFloat(document.getElementById('param-largo').value) || 300,
+        numCaras: parseInt(document.getElementById('param-gajos').value, 10) || 16,
+        bainha: parseFloat(document.getElementById('param-bainha').value) || 0
+    };
+}
+
+// ================== DADOS ==================
+async function loadData() {
+    try {
+        const res = await fetch('data.json');
+        if (!res.ok) throw new Error('data.json não encontrado');
+        currentData = await res.json();
+        allModels = Object.keys(currentData)
+            .map(key => ({ key, name: currentData[key].name || key, category: categorize(key) }))
+            .sort((a, b) => a.name.localeCompare(b.name, 'pt'));
+        modelsByCategory = {};
+        allModels.forEach(m => {
+            (modelsByCategory[m.category] = modelsByCategory[m.category] || []).push(m);
+        });
+        setupModelPicker();
+        selectModel(getModelKeyFromURL() || 'Piao3');
+    } catch (e) {
+        alert('data.json não encontrado!\n\nColoque na mesma pasta do riscar-molde.html');
+        console.error(e);
+    }
+}
+
+function setupModelPicker() {
+    const picker = document.getElementById('model-picker');
+    const searchInput = document.getElementById('model-search');
+    searchInput.addEventListener('focus', () => {
+        searchInput.select();
+        currentCategory = null;
+        renderCategoryItems();
+        showModelList();
+    });
+    searchInput.addEventListener('input', () => { renderPicker(); showModelList(); });
+    searchInput.addEventListener('keydown', e => {
+        if (e.key === 'Escape') { hideModelList(); searchInput.blur(); }
+        else if (e.key === 'Enter') {
+            const first = document.querySelector('#model-list .model-item:not(.model-empty)');
+            if (first) first.click();
+        }
+    });
+    document.addEventListener('click', e => {
+        if (!picker.contains(e.target)) hideModelList();
+    });
+}
+function showModelList() {
+    const list = document.getElementById('model-list');
+    const wrap = document.getElementById('model-search-wrap');
+    if (!list || !wrap) return;
+    const r = wrap.getBoundingClientRect();
+    list.style.display = 'block';
+    list.style.position = 'fixed';
+    list.style.left = r.left + 'px';
+    list.style.top = (r.bottom + 6) + 'px';
+    list.style.width = r.width + 'px';
+    list.style.zIndex = '9999';
+}
+function hideModelList() {
+    const list = document.getElementById('model-list');
+    if (list) list.style.display = 'none';
+}
+window.addEventListener('scroll', () => {
+    if (document.getElementById('model-list')?.style.display === 'block') showModelList();
+}, true);
+window.addEventListener('resize', () => {
+    if (document.getElementById('model-list')?.style.display === 'block') showModelList();
+});
+function renderPicker() {
+    const q = document.getElementById('model-search').value.trim().toLowerCase();
+    if (q) {
+        const pool = currentCategory ? (modelsByCategory[currentCategory] || []) : allModels;
+        renderModelItems(pool.filter(m => m.name.toLowerCase().includes(q)), !!currentCategory);
+    } else if (currentCategory) {
+        renderModelItems(modelsByCategory[currentCategory] || [], true);
+    } else {
+        renderCategoryItems();
+    }
+}
+function renderCategoryItems() {
+    const list = document.getElementById('model-list');
+    list.innerHTML = '';
+    CATEGORY_ORDER.forEach(cat => {
+        const items = modelsByCategory[cat];
+        if (!items || !items.length) return;
+        const row = document.createElement('div');
+        row.className = 'category-item';
+        row.innerHTML = `<span>${cat}</span><span class="category-count">${items.length}</span>`;
+        row.onclick = e => {
+            e.stopPropagation();
+            currentCategory = cat;
+            document.getElementById('model-search').value = '';
+            renderPicker();
+        };
+        list.appendChild(row);
+    });
+}
+function renderModelItems(models, withBack) {
+    const list = document.getElementById('model-list');
+    list.innerHTML = '';
+    if (withBack) {
+        const back = document.createElement('div');
+        back.className = 'model-back';
+        back.textContent = '← Categorias';
+        back.onclick = e => {
+            e.stopPropagation();
+            currentCategory = null;
+            document.getElementById('model-search').value = '';
+            renderPicker();
+        };
+        list.appendChild(back);
+    }
+    if (!models.length) {
+        const empty = document.createElement('div');
+        empty.className = 'model-item model-empty';
+        empty.textContent = 'Nenhum modelo encontrado';
+        list.appendChild(empty);
+        return;
+    }
+    models.forEach(m => {
+        const item = document.createElement('div');
+        item.className = 'model-item';
+        item.textContent = m.name;
+        item.onclick = e => { e.stopPropagation(); selectModel(m.key); };
+        list.appendChild(item);
+    });
+}
+
+function selectModel(key) {
+    const m = allModels.find(x => x.key === key);
+    if (!m || !currentData[key]) return;
+    document.getElementById('model-search').value = m.name;
+    document.getElementById('model-current-name').textContent = m.name;
+    const headerName = document.getElementById('header-model-name');
+    headerName.textContent = m.name;
+    headerName.title = 'Molde: ' + m.name;
+    currentCategory = null;
+    currentModelKey = key;
+    hideModelList();
+    updateURL(key);
+
+    const g = currentData[key];
+    modelRaw = {
+        name: g.name || key,
+        perimeter: g.perimeter,
+        heightAcum: g.heightAcum,
+        dist: (g.dist && g.dist.length === g.perimeter.length)
+            ? g.dist.slice()
+            : (() => {
+                const d = [0];
+                for (let i = 1; i < g.heightAcum.length; i++) d.push(g.heightAcum[i] - g.heightAcum[i - 1]);
+                return d;
+            })()
+    };
+    rebuildMold();
+    resetGridTransforms();
+    fitView();
+    redraw();
+}
+
+// ================== MOLDE GOMO ==================
+function rebuildMold() {
+    if (!modelRaw) return;
+    const { Largo, numCaras, bainha } = getParams();
+    const dist = modelRaw.dist;
+    const perim = modelRaw.perimeter;
+    const LargoBase = dist.reduce((a, b) => a + b, 0) || 1;
+
+    let sum = 0;
+    moldPts = [];
+    for (let i = 0; i < dist.length; i++) {
+        const dL = dist[i] * Largo / LargoBase;
+        const widthHalf = ((perim[i] * Largo / LargoBase) / (2 * numCaras)) + (bainha / 2);
+        sum += dL;
+        moldPts.push({ idx: i, dL, accumL: sum, widthHalf: Math.max(widthHalf, 0) });
+    }
+}
+
+/** Perfil com ponta em s=0 (topo), boca em s=L */
+function profileFromTip() {
+    if (!moldPts.length) return [];
+    const L = moldPts[moldPts.length - 1].accumL;
+    return moldPts.map(p => ({ s: L - p.accumL, w: p.widthHalf, accumL: p.accumL })).reverse();
+}
+
+function goreLength() {
+    if (!moldPts.length) return 0;
+    return moldPts[moldPts.length - 1].accumL;
+}
+
+function widthAtS(s) {
+    const prof = profileFromTip();
+    if (prof.length < 2) return 0;
+    if (s <= prof[0].s) return prof[0].w;
+    if (s >= prof[prof.length - 1].s) return prof[prof.length - 1].w;
+    for (let i = 0; i < prof.length - 1; i++) {
+        if (s >= prof[i].s && s <= prof[i + 1].s) {
+            const t = (s - prof[i].s) / Math.max(prof[i + 1].s - prof[i].s, 1e-9);
+            return prof[i].w + t * (prof[i + 1].w - prof[i].w);
+        }
+    }
+    return 0;
+}
+
+/** Largura (meia) de um gomo do cone se montado com "n" partes em vez de
+ * "numCaras" — n > numCaras fica mais fino (mesma circunferência real
+ * redistribuída); n <= numCaras fica na largura ORIGINAL (leque parcial). */
+function widthAtSForN(s, n) {
+    const { numCaras, bainha } = getParams();
+    if (!n || n <= numCaras) return widthAtS(s);
+    const raw = Math.max(widthAtS(s) - bainha / 2, 0);
+    return raw * (numCaras / n) + bainha / 2;
+}
+
+/** Sempre dividido bem no meio do gomo (ponta + boca) — igual ao Lek. */
+function getSegments() {
+    const L = goreLength();
+    if (L <= 0) return [];
+    const half = L / 2;
+    return [
+        { id: 0, s0: 0, s1: half, len: half },
+        { id: 1, s0: half, s1: L, len: L - half }
+    ];
+}
+
+// ================== LAYOUT CONE/DIAMANTE ==================
+function layoutTipFan(seg, n) {
+    if (!seg || n < 1) return null;
+    const H = Math.max(seg.s1 - seg.s0, 0.1);
+
+    let wBase = 0;
+    const steps = Math.max(10, Math.ceil(H / 2));
+    for (let i = 0; i <= steps; i++) {
+        wBase = Math.max(wBase, widthAtSForN(seg.s0 + (H * i) / steps, n));
+    }
+    wBase = Math.max(wBase, widthAtSForN(seg.s1, n), 0.05);
+
+    const halfAng = Math.atan2(wBase, H);
+    const step = 2 * halfAng;
+    const angles = [];
+    if (n === 1) angles.push(0);
+    else {
+        const a0 = -step * (n - 1) / 2;
+        for (let k = 0; k < n; k++) angles.push(a0 + k * step);
+    }
+
+    const proto = [[0, 0], [wBase, H], [-wBase, H]];
+    function rot(pt, ang) {
+        const c = Math.cos(ang), s = Math.sin(ang);
+        return [pt[0] * c - pt[1] * s, pt[0] * s + pt[1] * c];
+    }
+
+    const paths = [];
+    const seams = [];
+    const mouthEdges = [];
+    angles.forEach(ang => {
+        paths.push(proto.map(p => rot(p, ang)));
+        seams.push([rot([0, 0], ang), rot([wBase, H], ang)]);
+        mouthEdges.push([rot([-wBase, H], ang), rot([wBase, H], ang)]);
+    });
+
+    return finalizeFanLayout(paths, seams, mouthEdges, {
+        mode: 'cone', n, H, wBot: wBase, wTop: 0,
+        pieceAngDeg: step * 180 / Math.PI, seg,
+        labelApex: 'PONTA', labelOuter: 'JUNÇÃO'
+    });
+}
+
+function layoutBocaFan(seg, n) {
+    if (!seg || n < 1) return null;
+    const H = Math.max(seg.s1 - seg.s0, 0.1);
+
+    let wJoin = Math.max(widthAtSForN(seg.s0, n), 0.05);
+    let wMouth = Math.max(widthAtSForN(seg.s1, n), 0.15);
+
+    let joinIsOuter = wJoin >= wMouth;
+    let wOut = joinIsOuter ? wJoin : wMouth;
+    let wIn = joinIsOuter ? wMouth : wJoin;
+
+    const arcOut = n * 2 * wOut;
+    const arcIn = n * 2 * wIn;
+
+    let R_in, R_out, theta;
+
+    if (Math.abs(arcOut - arcIn) < 1e-6) {
+        return layoutBocaStraight(seg, n, wJoin, wMouth, H);
+    }
+
+    if (arcOut > arcIn) {
+        R_in = (arcIn * H) / (arcOut - arcIn);
+        R_out = R_in + H;
+        theta = arcIn / R_in;
+    } else {
+        R_in = (arcOut * H) / (arcIn - arcOut);
+        R_out = R_in + H;
+        theta = arcOut / R_in;
+        const t = wOut; wOut = wIn; wIn = t;
+        joinIsOuter = !joinIsOuter;
+    }
+
+    if (!isFinite(theta) || theta <= 0 || theta > Math.PI * 1.9) {
+        return layoutBocaStraight(seg, n, wJoin, wMouth, H);
+    }
+
+    const dAng = theta / n;
+    const aStart = -theta / 2;
+
+    const paths = [];
+    const seams = [];
+    const mouthEdges = [];
+    const joinEdges = [];
+
+    for (let k = 0; k < n; k++) {
+        const a0 = aStart + k * dAng;
+        const a1 = a0 + dAng;
+
+        const pIn0 = [R_in * Math.sin(a0), R_in * Math.cos(a0)];
+        const pOut0 = [R_out * Math.sin(a0), R_out * Math.cos(a0)];
+        const pOut1 = [R_out * Math.sin(a1), R_out * Math.cos(a1)];
+        const pIn1 = [R_in * Math.sin(a1), R_in * Math.cos(a1)];
+
+        paths.push([pIn0, pOut0, pOut1, pIn1]);
+        seams.push([pIn0, pOut0]);
+        mouthEdges.push([pIn0, pIn1]);
+        joinEdges.push([pOut0, pOut1]);
+    }
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    paths.forEach(poly => poly.forEach(([x, y]) => {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    }));
+
+    const midX = (minX + maxX) / 2;
+    const flipAnchor = ([x, y]) => [x - midX, -y];
+    for (let i = 0; i < paths.length; i++) paths[i] = paths[i].map(flipAnchor);
+    for (let i = 0; i < seams.length; i++) seams[i] = seams[i].map(flipAnchor);
+    for (let i = 0; i < mouthEdges.length; i++) mouthEdges[i] = mouthEdges[i].map(flipAnchor);
+    for (let i = 0; i < joinEdges.length; i++) joinEdges[i] = joinEdges[i].map(flipAnchor);
+
+    minX = Infinity; maxX = -Infinity; minY = Infinity; maxY = -Infinity;
+    paths.forEach(poly => poly.forEach(([x, y]) => {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    }));
+    const sh = ([x, y]) => [x, y - minY];
+    for (let i = 0; i < paths.length; i++) paths[i] = paths[i].map(sh);
+    for (let i = 0; i < seams.length; i++) seams[i] = seams[i].map(sh);
+    for (let i = 0; i < mouthEdges.length; i++) mouthEdges[i] = mouthEdges[i].map(sh);
+    for (let i = 0; i < joinEdges.length; i++) joinEdges[i] = joinEdges[i].map(sh);
+    maxY -= minY; minY = 0;
+
+    let my = 0, mc = 0, jy = 0, jc = 0;
+    mouthEdges.forEach(e => e.forEach(([, y]) => { my += y; mc++; }));
+    joinEdges.forEach(e => e.forEach(([, y]) => { jy += y; jc++; }));
+    my = mc ? my / mc : 0;
+    jy = jc ? jy / jc : 0;
+    if (my < jy) {
+        const flip2 = ([x, y]) => [x, maxY - y];
+        for (let i = 0; i < paths.length; i++) paths[i] = paths[i].map(flip2);
+        for (let i = 0; i < seams.length; i++) seams[i] = seams[i].map(flip2);
+        for (let i = 0; i < mouthEdges.length; i++) mouthEdges[i] = mouthEdges[i].map(flip2);
+        for (let i = 0; i < joinEdges.length; i++) joinEdges[i] = joinEdges[i].map(flip2);
+    }
+
+    minX = Infinity; maxX = -Infinity; minY = Infinity; maxY = -Infinity;
+    paths.forEach(poly => poly.forEach(([x, y]) => {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    }));
+
+    const mouthOpeningCm = n * 2 * Math.max(widthAtSForN(seg.s1, n), 0.15);
+
+    return {
+        mode: 'boca', paths, seams, mouthEdges, joinEdges, stations: [], n,
+        len: maxY - minY, maxW: Math.max(Math.abs(minX), Math.abs(maxX)) * 2,
+        maxHalf: Math.max(Math.abs(minX), Math.abs(maxX), 1),
+        minX, maxX, minY, maxY, wTop: wJoin, wBot: wMouth, H,
+        pieceAngDeg: theta * 180 / Math.PI, seg, apex: [0, minY],
+        labelApex: 'JUNÇÃO', labelOuter: 'BOCA (abertura)', mouthOpeningCm
+    };
+}
+
+function layoutBocaStraight(seg, n, wJoin, wMouth, H) {
+    wJoin = Math.max(wJoin, 0.05);
+    wMouth = Math.max(wMouth, 0.15);
+    const paths = [];
+    const seams = [];
+    for (let k = 0; k < n; k++) {
+        const xL0 = -n * wJoin + k * (2 * wJoin);
+        const xR0 = xL0 + 2 * wJoin;
+        const xL1 = -n * wMouth + k * (2 * wMouth);
+        const xR1 = xL1 + 2 * wMouth;
+        paths.push([[xL0, 0], [xR0, 0], [xR1, H], [xL1, H]]);
+        if (k > 0) {
+            seams.push([
+                [-n * wJoin + k * (2 * wJoin), 0],
+                [-n * wMouth + k * (2 * wMouth), H]
+            ]);
+        }
+    }
+    const half0 = n * wJoin;
+    const half1 = n * wMouth;
+    const maxHalf = Math.max(half0, half1);
+    return {
+        mode: 'boca', paths, seams,
+        mouthEdges: [[[-half1, H], [half1, H]]],
+        joinEdges: [[[-half0, 0], [half0, 0]]],
+        stations: [], n, len: H, maxW: maxHalf * 2, maxHalf,
+        minX: -maxHalf, maxX: maxHalf, minY: 0, maxY: H,
+        wTop: wJoin, wBot: wMouth, H, pieceAngDeg: 0, seg, apex: [0, 0],
+        labelApex: 'JUNÇÃO', labelOuter: 'BOCA (abertura)', mouthOpeningCm: n * 2 * wMouth
+    };
+}
+
+function finalizeFanLayout(paths, seams, mouthEdges, meta) {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    paths.forEach(poly => poly.forEach(([x, y]) => {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    }));
+    const midX = (minX + maxX) / 2;
+    const sh = ([x, y]) => [x - midX, y - minY];
+    for (let i = 0; i < paths.length; i++) paths[i] = paths[i].map(sh);
+    for (let i = 0; i < seams.length; i++) seams[i] = seams[i].map(sh);
+    for (let i = 0; i < mouthEdges.length; i++) mouthEdges[i] = mouthEdges[i].map(sh);
+    maxY -= minY; minY = 0; minX -= midX; maxX -= midX;
+
+    return {
+        mode: meta.mode || 'cone', paths, seams, mouthEdges, stations: [], n: meta.n,
+        len: maxY - minY, maxW: (meta.wBot || 0) * 2,
+        maxHalf: Math.max(Math.abs(minX), Math.abs(maxX), 1),
+        minX, maxX, minY, maxY, wTop: meta.wTop || 0, wBot: meta.wBot || 0, H: meta.H,
+        pieceAngDeg: meta.pieceAngDeg || 0, seg: meta.seg, apex: [0, 0],
+        labelApex: meta.labelApex || 'PONTA', labelOuter: meta.labelOuter || 'BASE'
+    };
+}
+
+function layoutConeFlat(seg, n) {
+    if (!seg || n < 1) return null;
+    if (seg.s0 < 0.5) return layoutTipFan(seg, n);
+    return layoutBocaFan(seg, n);
+}
+
+function layoutDiamond(segList, n) {
+    if (!segList || !segList.length) return null;
+    if (segList.length === 1) return layoutConeFlat(segList[0], n);
+
+    const ordered = segList.slice().sort((a, b) => a.s0 - b.s0);
+    const top = layoutTipFan(ordered[0], n);
+    const bot = layoutBocaFan(ordered[ordered.length - 1], n);
+    if (!top || !bot) return top || bot;
+
+    const sx = (bot.maxHalf > 1e-9) ? (top.maxHalf / bot.maxHalf) : 1;
+    const eqY = top.maxY;
+
+    const paths = [];
+    const seams = [];
+
+    top.paths.forEach(poly => paths.push(poly.map(([x, y]) => [x, y])));
+    (top.seams || []).forEach(s => seams.push(s.map(([x, y]) => [x, y])));
+
+    bot.paths.forEach(poly => {
+        paths.push(poly.map(([x, y]) => [x * sx, eqY + y]));
+    });
+    (bot.seams || []).forEach(s => {
+        seams.push(s.map(([x, y]) => [x * sx, eqY + y]));
+    });
+
+    const mouthEdges = (bot.mouthEdges || []).map(edge =>
+        edge.map(([x, y]) => [x * sx, eqY + y])
+    );
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    paths.forEach(poly => poly.forEach(([x, y]) => {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    }));
+
+    return {
+        mode: 'diamond', paths, seams, mouthEdges, stations: [], n,
+        len: maxY - minY, maxW: Math.max(top.maxW, bot.maxW * sx),
+        maxHalf: Math.max(top.maxHalf, bot.maxHalf * sx),
+        minX, maxX, minY, maxY, wTop: 0, wBot: bot.wBot, H: maxY - minY,
+        pieceAngDeg: top.pieceAngDeg, seg: ordered[0], segs: ordered,
+        apex: [0, minY], equatorY: eqY,
+        labelApex: 'PONTA', labelOuter: 'BOCA (abertura)', labelMid: 'EQUADOR',
+        mouthOpeningCm: bot.mouthOpeningCm
+    };
+}
+
+function layoutCurrent(n) {
+    const segs = getSegments();
+    if (!segs.length) return null;
+    if (segs.length === 1) return layoutConeFlat(segs[0], n);
+    return layoutDiamond(segs, n);
+}
+
+/** Ponta e boca como layouts LOCAIS independentes (cada um já centrado em
+ * si mesmo) — usados pra dar a cada metade seu próprio X/Y/escala/ângulo. */
+function layoutTopLocal(n) {
+    const segs = getSegments();
+    if (!segs.length) return null;
+    return layoutConeFlat(segs[0], n);
+}
+function layoutBotLocal(n) {
+    const segs = getSegments();
+    if (segs.length < 2) return null;
+    return layoutConeFlat(segs[segs.length - 1], n);
+}
+
+// ================== SVG / VIEW HELPERS ==================
+function svgEl(name, attrs) {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', name);
+    for (const k in attrs) {
+        if (attrs[k] == null || attrs[k] === '') continue;
+        if (k === 'style') el.setAttribute('style', attrs[k]);
+        else el.setAttribute(k, attrs[k]);
+    }
+    return el;
+}
+function pathFromPoly(poly) {
+    if (!poly.length) return '';
+    let d = '';
+    poly.forEach((p, i) => { d += (i === 0 ? 'M' : 'L') + ` ${p[0]} ${p[1]} `; });
+    return d + 'Z';
+}
+function worldToScreen(x, y) {
+    return { x: view.x + x * view.scale, y: view.y + y * view.scale };
+}
+function screenToWorld(sx, sy) {
+    return { x: (sx - view.x) / view.scale, y: (sy - view.y) / view.scale };
+}
+function clientToSvg(e) {
+    const svg = document.getElementById('lek-svg');
+    const rect = svg.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+function fitView() {
+    const svg = document.getElementById('lek-svg');
+    const w = svg.clientWidth || 800;
+    const h = svg.clientHeight || 600;
+    const pad = 48;
+
+    let minX, minY, maxX, maxY;
+    if (refImage) {
+        minX = 0; minY = 0; maxX = refImage.natW; maxY = refImage.natH;
+    } else {
+        const lay = layoutCurrent(coneN);
+        if (!lay) { view.scale = 2; view.x = w / 2; view.y = pad; return; }
+        minX = lay.minX; maxX = lay.maxX; minY = lay.minY; maxY = lay.maxY;
+    }
+    const contentW = Math.max(maxX - minX, 1);
+    const contentH = Math.max(maxY - minY, 1);
+    const sx = (w - pad * 2) / contentW;
+    const sy = (h - pad * 2) / contentH;
+    view.scale = Math.max(0.02, Math.min(sx, sy, 40));
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    view.x = w / 2 - cx * view.scale;
+    view.y = h / 2 - cy * view.scale;
+}
+
+// ================== TRANSFORM DA GRADE ==================
+function localCenter(lay) {
+    return [(lay.minX + lay.maxX) / 2, (lay.minY + lay.maxY) / 2];
+}
+function localToWorld(lay, t, lx, ly) {
+    const [cx0, cy0] = localCenter(lay);
+    const dx = (lx - cx0) * t.scale, dy = (ly - cy0) * t.scale;
+    const rad = t.rot * Math.PI / 180;
+    const c = Math.cos(rad), s = Math.sin(rad);
+    return [t.x + dx * c - dy * s, t.y + dx * s + dy * c];
+}
+function worldToLocal(lay, t, wx, wy) {
+    const [cx0, cy0] = localCenter(lay);
+    const rad = -t.rot * Math.PI / 180;
+    const dx = wx - t.x, dy = wy - t.y;
+    const c = Math.cos(rad), s = Math.sin(rad);
+    return [(dx * c - dy * s) / t.scale + cx0, (dx * s + dy * c) / t.scale + cy0];
+}
+function rotateGapLocal(lay) {
+    return Math.max((lay.maxY - lay.minY) * 0.12, 8);
+}
+function distWorld(a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1]); }
+
+/** Posição/escala inicial de cada metade — ponta um pouco acima do centro
+ * da imagem, boca um pouco abaixo, quase se tocando (o usuário ajusta cada
+ * uma dali pra bater com a arte). */
+function resetGridTransforms() {
+    const topLay = layoutTopLocal(coneN);
+    const botLay = layoutBotLocal(coneN);
+    const cx = refImage ? refImage.natW / 2 : 0;
+    const halfTargetH = refImage ? refImage.natH * 0.32 : 60;
+    const centerY = refImage ? refImage.natH / 2 : 0;
+
+    if (topLay) {
+        const h = Math.max(topLay.maxY - topLay.minY, 1e-6);
+        gridTTop = { x: cx, y: centerY - halfTargetH * 0.5, scale: halfTargetH / h, rot: 0 };
+    } else {
+        gridTTop = { x: 0, y: 0, scale: 1, rot: 0 };
+    }
+    if (botLay) {
+        const h = Math.max(botLay.maxY - botLay.minY, 1e-6);
+        gridTBot = { x: cx, y: centerY + halfTargetH * 0.5, scale: halfTargetH / h, rot: 0 };
+    } else {
+        gridTBot = { x: 0, y: 0, scale: 1, rot: 0 };
+    }
+}
+
+function pointInPoly(x, y, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+        const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
+    }
+    return inside;
+}
+function cross2(ax, ay, bx, by) { return ax * by - ay * bx; }
+
+/** Interseccao de um raio (origem+direcao, t>=0) com um segmento a-b
+ * (s em [0,1]). Retorna o ponto e o parametro t, ou null se nao cruza. */
+function rayVsSegment(origin, dir, a, b) {
+    const ex = b[0] - a[0], ey = b[1] - a[1];
+    const denom = cross2(dir[0], dir[1], ex, ey);
+    if (Math.abs(denom) < 1e-9) return null;
+    const dx = a[0] - origin[0], dy = a[1] - origin[1];
+    const t = cross2(dx, dy, ex, ey) / denom;
+    const s = cross2(dx, dy, dir[0], dir[1]) / denom;
+    if (t < 1e-6 || s < -1e-6 || s > 1 + 1e-6) return null;
+    return { t, point: [origin[0] + dir[0] * t, origin[1] + dir[1] * t] };
+}
+
+/**
+ * Divide um contorno tracado a mao (polígono fechado, coords do mundo) em
+ * N fatias angulares, tipo leque, a partir do pivo (centro do topo do
+ * contorno). Cada raio parte do pivo e encontra onde cruza o contorno
+ * (ponto mais distante nessa direcao) -- os raios viram as "costuras", e o
+ * triangulo pivo->corte[k]->corte[k+1] vira cada gomo. Funciona pra
+ * qualquer contorno tracado (ponta ou boca), sem depender da matematica
+ * real do molde -- e por isso que fica "certinho" na arte do cliente.
+ */
+function sliceContourIntoGomos(contour, n) {
+    if (!contour || contour.length < 3 || n < 1) return null;
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity;
+    contour.forEach(([x, y]) => {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y);
+    });
+    const pivot = [(minX + maxX) / 2, minY];
+
+    const angleOf = ([x, y]) => Math.atan2(x - pivot[0], y - pivot[1]); // 0 = reto pra baixo
+    let angles = contour.map(angleOf);
+    const sorted = angles.slice().sort((a, b) => a - b);
+    const med = sorted[Math.floor(sorted.length / 2)];
+    angles = angles.map(a => {
+        while (a - med > Math.PI) a -= 2 * Math.PI;
+        while (a - med < -Math.PI) a += 2 * Math.PI;
+        return a;
+    });
+    const thetaMin = Math.min(...angles);
+    const thetaMax = Math.max(...angles);
+
+    function castRay(ang) {
+        const dir = [Math.sin(ang), Math.cos(ang)];
+        let best = null, bestT = -Infinity;
+        for (let i = 0; i < contour.length; i++) {
+            const a = contour[i], b = contour[(i + 1) % contour.length];
+            const hit = rayVsSegment(pivot, dir, a, b);
+            if (hit && hit.t > bestT) { bestT = hit.t; best = hit.point; }
+        }
+        return best || pivot;
+    }
+
+    const dAng = (thetaMax - thetaMin) / n;
+    const hits = [];
+    for (let k = 0; k <= n; k++) hits.push(castRay(thetaMin + k * dAng));
+
+    const panels = [];
+    for (let k = 0; k < n; k++) panels.push([pivot, hits[k], hits[k + 1]]);
+    return { pivot, hits, panels };
+}
+
+/** Segmento entre dois pontos do contorno (com handle opcional) -- reto se
+ * nenhum dos dois tem handle, curva bezier cubica se algum tem (clique e
+ * arrasto = ponto de curva, espelhado tipo Illustrator: o handle empurra a
+ * tangente de SAIDA de `a` e a de ENTRADA de `b` no sentido oposto). */
+function contourSegmentD(a, b) {
+    if (!a.handle && !b.handle) return `L ${b.x} ${b.y} `;
+    const c1 = a.handle ? [a.x + a.handle.dx, a.y + a.handle.dy] : [a.x, a.y];
+    const c2 = b.handle ? [b.x - b.handle.dx, b.y - b.handle.dy] : [b.x, b.y];
+    return `C ${c1[0]} ${c1[1]}, ${c2[0]} ${c2[1]}, ${b.x} ${b.y} `;
+}
+function contourPathD(points, closed) {
+    if (!points.length) return '';
+    let d = `M ${points[0].x} ${points[0].y} `;
+    for (let i = 1; i < points.length; i++) d += contourSegmentD(points[i - 1], points[i]);
+    if (closed && points.length > 1) d += contourSegmentD(points[points.length - 1], points[0]);
+    if (closed) d += 'Z';
+    return d;
+}
+function cubicBezierPoint(p0, c1, c2, p1, t) {
+    const mt = 1 - t;
+    const a = mt * mt * mt, b = 3 * mt * mt * t, c = 3 * mt * t * t, d = t * t * t;
+    return [a * p0[0] + b * c1[0] + c * c2[0] + d * p1[0], a * p0[1] + b * c1[1] + c * c2[1] + d * p1[1]];
+}
+/** Aproxima um segmento (reto ou curvo) por uma linha poligonal densa --
+ * necessario porque o fatiamento em gomos (sliceContourIntoGomos) trabalha
+ * com raio-vs-segmento reto, entao curvas viram varios segmentinhos retos. */
+function flattenContourSegment(a, b, steps) {
+    if (!a.handle && !b.handle) return [[b.x, b.y]];
+    const p0 = [a.x, a.y], p1 = [b.x, b.y];
+    const c1 = a.handle ? [a.x + a.handle.dx, a.y + a.handle.dy] : p0;
+    const c2 = b.handle ? [b.x - b.handle.dx, b.y - b.handle.dy] : p1;
+    const pts = [];
+    for (let i = 1; i <= steps; i++) pts.push(cubicBezierPoint(p0, c1, c2, p1, i / steps));
+    return pts;
+}
+function flattenContourPoints(points) {
+    if (points.length < 2) return points.map(p => [p.x, p.y]);
+    const out = [[points[0].x, points[0].y]];
+    for (let i = 1; i < points.length; i++) out.push(...flattenContourSegment(points[i - 1], points[i], 16));
+    const closing = flattenContourSegment(points[points.length - 1], points[0], 16);
+    closing.pop(); // ultimo ponto da volta de fechamento eh o proprio points[0] -- nao duplica
+    out.push(...closing);
+    return out;
+}
+
+function pointInGrid(lay, t, wx, wy) {
+    const [lx, ly] = worldToLocal(lay, t, wx, wy);
+    return lay.paths.some(poly => pointInPoly(lx, ly, poly));
+}
+function hitHandle(lay, t, wx, wy, localPt, tolPx) {
+    const hp = localToWorld(lay, t, localPt[0], localPt[1]);
+    const tolWorld = tolPx / view.scale;
+    return distWorld([wx, wy], hp) <= tolWorld;
+}
+
+// ================== DESENHO ==================
+function redraw() {
+    const svg = document.getElementById('lek-svg');
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    const gWorld = svgEl('g', { transform: `translate(${view.x},${view.y}) scale(${view.scale})` });
+    svg.appendChild(gWorld);
+
+    if (refImage) {
+        gWorld.appendChild(svgEl('image', {
+            href: refImage.src, x: 0, y: 0, width: refImage.natW, height: refImage.natH
+        }));
+    }
+
+    // Sem imagem enviada ainda não tem em cima do que alinhar/contornar --
+    // não mostra o cone (nem a grade arrastável, nem o contorno) até o
+    // cliente subir a imagem de referência.
+    let topLay = null, botLay = null;
+    if (refImage) {
+        if (gridGenerated) {
+            topLay = layoutTopLocal(coneN);
+            botLay = layoutBotLocal(coneN);
+
+            if (pontaContourPoly) drawContourGomos(gWorld, pontaContourPoly, coneN, '#aed6f1');
+            else if (topLay) drawGridOverlay(gWorld, topLay, gridTTop, '#aed6f1');
+
+            if (bocaContourPoly) drawContourGomos(gWorld, bocaContourPoly, coneN, '#a9dfbf');
+            else if (botLay) drawGridOverlay(gWorld, botLay, gridTBot, '#a9dfbf');
+        }
+        drawContourPreview(gWorld);
+    }
+    currentTopLay = topLay;
+    currentBotLay = botLay;
+
+    document.getElementById('empty-state').classList.toggle('hide', !!refImage);
+    if (!refImage) {
+        document.getElementById('hud-mode').textContent = 'Envie a imagem de referência';
+    } else if (contourMode) {
+        document.getElementById('hud-mode').textContent = `Contornando ${contourMode === 'ponta' ? 'a ponta (bico)' : 'a boca'} — clique pra marcar, feche no 1º ponto`;
+    } else if (!gridGenerated) {
+        document.getElementById('hud-mode').textContent = 'Contorne e clique em "Gerar grade" pra ver o cone';
+    } else {
+        document.getElementById('hud-mode').textContent = (topLay || botLay)
+            ? `${coneN} gomos · ponta + boca · arraste para ajustar`
+            : 'Escolha um molde';
+    }
+}
+
+/** Desenha os gomos de uma metade ja contornada a mao (fatiada em leque a
+ * partir do topo do contorno) -- substitui a grade arrastavel pra essa
+ * metade, ja que a posicao/forma agora vem do contorno tracado. */
+function drawContourGomos(gWorld, contour, n, fill) {
+    const sliced = sliceContourIntoGomos(contour, n);
+    if (!sliced) return;
+    const g = svgEl('g', {});
+    gWorld.appendChild(g);
+
+    sliced.panels.forEach(tri => {
+        g.appendChild(svgEl('path', {
+            d: pathFromPoly(tri), fill, 'fill-opacity': String(gridOpacity),
+            stroke: '#1a5276', 'stroke-width': '2', 'stroke-linejoin': 'round',
+            'vector-effect': 'non-scaling-stroke'
+        }));
+    });
+
+    g.appendChild(svgEl('path', {
+        d: pathFromPoly(contour), fill: 'none', stroke: '#e67e22',
+        'stroke-width': '2.4', 'vector-effect': 'non-scaling-stroke'
+    }));
+
+    g.appendChild(svgEl('circle', {
+        cx: sliced.pivot[0], cy: sliced.pivot[1], r: 5 / view.scale,
+        fill: '#1abc9c', stroke: '#fff', 'stroke-width': String(1.4 / view.scale)
+    }));
+}
+
+/** Contorno sendo tracado agora (linha tracejada + pontos), enquanto o
+ * cliente ainda esta clicando -- some assim que fecha ou cancela. */
+function drawContourPreview(gWorld) {
+    if (!contourMode || !contourPoints.length) return;
+    const g = svgEl('g', {});
+    gWorld.appendChild(g);
+
+    g.appendChild(svgEl('path', {
+        d: contourPathD(contourPoints, false), fill: 'none', stroke: '#1abc9c',
+        'stroke-width': '2', 'stroke-dasharray': '7 5', 'vector-effect': 'non-scaling-stroke'
+    }));
+
+    // alcas de curva (linha fina do ponto ate o handle), quando existirem
+    contourPoints.forEach(p => {
+        if (!p.handle) return;
+        g.appendChild(svgEl('line', {
+            x1: p.x, y1: p.y, x2: p.x + p.handle.dx, y2: p.y + p.handle.dy,
+            stroke: '#f1c40f', 'stroke-width': '1.4', 'vector-effect': 'non-scaling-stroke'
+        }));
+        g.appendChild(svgEl('circle', {
+            cx: p.x + p.handle.dx, cy: p.y + p.handle.dy, r: 3.5 / view.scale,
+            fill: '#f1c40f', stroke: '#fff', 'stroke-width': String(1 / view.scale)
+        }));
+    });
+
+    contourPoints.forEach((p, i) => {
+        const isFirst = i === 0 && contourPoints.length >= 3;
+        g.appendChild(svgEl('circle', {
+            cx: p.x, cy: p.y, r: (isFirst ? 8 : 5) / view.scale,
+            fill: isFirst ? '#f1c40f' : '#1abc9c', stroke: '#fff', 'stroke-width': String(1.2 / view.scale)
+        }));
+    });
+}
+
+function drawGridOverlay(gWorld, lay, t, fill) {
+    const g = svgEl('g', {});
+    gWorld.appendChild(g);
+
+    lay.paths.forEach(poly => {
+        const worldPoly = poly.map(([x, y]) => localToWorld(lay, t, x, y));
+        g.appendChild(svgEl('path', {
+            d: pathFromPoly(worldPoly), fill, 'fill-opacity': String(gridOpacity),
+            stroke: '#1a5276', 'stroke-width': String(0.6 / t.scale),
+            'stroke-linejoin': 'round', 'stroke-linecap': 'round'
+        }));
+    });
+
+    (lay.seams || []).forEach(seam => {
+        if (!seam || seam.length < 2) return;
+        const a = localToWorld(lay, t, seam[0][0], seam[0][1]);
+        const b = localToWorld(lay, t, seam[1][0], seam[1][1]);
+        g.appendChild(svgEl('line', {
+            x1: a[0], y1: a[1], x2: b[0], y2: b[1],
+            stroke: '#2471a3', 'stroke-width': '0.14', 'stroke-dasharray': '0.6 0.4',
+            'vector-effect': 'non-scaling-stroke'
+        }));
+    });
+
+    if (lay.mouthEdges) {
+        lay.mouthEdges.forEach(edge => {
+            if (!edge || edge.length < 2) return;
+            let d = '';
+            edge.forEach((p, i) => {
+                const wp = localToWorld(lay, t, p[0], p[1]);
+                d += (i === 0 ? 'M' : 'L') + ` ${wp[0]} ${wp[1]} `;
+            });
+            g.appendChild(svgEl('path', {
+                d, fill: 'none', stroke: '#e67e22', 'stroke-width': '0.5',
+                'stroke-linecap': 'round', 'vector-effect': 'non-scaling-stroke'
+            }));
+        });
+    }
+
+    // caixa pontilhada em volta da grade
+    const corners = [
+        [lay.minX, lay.minY], [lay.maxX, lay.minY],
+        [lay.maxX, lay.maxY], [lay.minX, lay.maxY]
+    ].map(([x, y]) => localToWorld(lay, t, x, y));
+    g.appendChild(svgEl('path', {
+        d: pathFromPoly(corners), fill: 'none', stroke: 'rgba(255,255,255,0.7)',
+        'stroke-width': '0.4', 'stroke-dasharray': '1.4 0.9', 'vector-effect': 'non-scaling-stroke'
+    }));
+
+    // alça de girar (acima do topo)
+    const rotLocal = [(lay.minX + lay.maxX) / 2, lay.minY - rotateGapLocal(lay)];
+    const rotWorld = localToWorld(lay, t, rotLocal[0], rotLocal[1]);
+    const topMidWorld = localToWorld(lay, t, (lay.minX + lay.maxX) / 2, lay.minY);
+    g.appendChild(svgEl('line', {
+        x1: topMidWorld[0], y1: topMidWorld[1], x2: rotWorld[0], y2: rotWorld[1],
+        stroke: 'rgba(255,255,255,0.7)', 'stroke-width': '0.35', 'vector-effect': 'non-scaling-stroke'
+    }));
+    g.appendChild(svgEl('circle', {
+        cx: rotWorld[0], cy: rotWorld[1], r: 9 / view.scale,
+        fill: '#1abc9c', stroke: '#fff', 'stroke-width': String(1.4 / view.scale),
+        style: 'cursor:grab'
+    }));
+
+    // alça de redimensionar (canto inferior direito)
+    const scaleWorld = localToWorld(lay, t, lay.maxX, lay.maxY);
+    const hs = 8 / view.scale;
+    g.appendChild(svgEl('rect', {
+        x: scaleWorld[0] - hs / 2, y: scaleWorld[1] - hs / 2, width: hs, height: hs,
+        fill: '#e67e22', stroke: '#fff', 'stroke-width': String(1.4 / view.scale),
+        style: 'cursor:nwse-resize'
+    }));
+}
+
+// ================== IMAGEM DE REFERÊNCIA ==================
+function setRefImageFromFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+        const src = reader.result;
+        const img = new Image();
+        img.onload = () => {
+            refImage = {
+                src, file, name: file.name || 'imagem.png',
+                natW: img.naturalWidth || 100, natH: img.naturalHeight || 100
+            };
+            document.getElementById('ref-thumb').src = src;
+            document.getElementById('ref-name').textContent = refImage.name;
+            document.getElementById('ref-thumb-wrap').style.display = 'flex';
+            document.getElementById('btn-remove-image').style.display = '';
+            document.getElementById('btn-ai-align').style.display = '';
+            document.getElementById('ai-align-status').style.display = 'none';
+            clearContours();
+            resetGridTransforms();
+            fitView();
+            redraw();
+        };
+        img.src = src;
+    };
+    reader.readAsDataURL(file);
+}
+function removeRefImage() {
+    refImage = null;
+    document.getElementById('ref-thumb-wrap').style.display = 'none';
+    document.getElementById('btn-remove-image').style.display = 'none';
+    document.getElementById('btn-ai-align').style.display = 'none';
+    document.getElementById('ai-align-status').style.display = 'none';
+    clearContours();
+    resetGridTransforms();
+    fitView();
+    redraw();
+}
+
+// ================== ALINHAR COM IA (Gemini) ==================
+function getAuthToken() {
+    try { return localStorage.getItem('plotter_token'); } catch (e) { return null; }
+}
+
+/** Resolve a transform (x,y,scale,rot) que mapeia p1Local->p1World e
+ * p2Local->p2World (rotação + escala uniforme, sem espelhar) usando o
+ * CENTRO local de `lay` como pivô — mesma convenção de localToWorld/
+ * worldToLocal. Com só 2 pares de pontos o sistema é exatamente
+ * determinado (4 incógnitas: x, y, escala, ângulo). */
+function similarityFromTwoPoints(lay, p1Local, p1World, p2Local, p2World) {
+    const [cx0, cy0] = localCenter(lay);
+    const ldx = p2Local[0] - p1Local[0], ldy = p2Local[1] - p1Local[1];
+    const wdx = p2World[0] - p1World[0], wdy = p2World[1] - p1World[1];
+    const lenL = Math.hypot(ldx, ldy) || 1e-6;
+    const lenW = Math.hypot(wdx, wdy);
+    const scale = lenW / lenL;
+    const rot = (Math.atan2(wdy, wdx) - Math.atan2(ldy, ldx)) * 180 / Math.PI;
+
+    const rad = rot * Math.PI / 180;
+    const c = Math.cos(rad), s = Math.sin(rad);
+    const dx = (p1Local[0] - cx0) * scale, dy = (p1Local[1] - cy0) * scale;
+    const rx = dx * c - dy * s, ry = dx * s + dy * c;
+    return { x: p1World[0] - rx, y: p1World[1] - ry, scale, rot };
+}
+
+async function alignWithAI() {
+    if (!refImage || !refImage.file) return;
+    const statusEl = document.getElementById('ai-align-status');
+    const btn = document.getElementById('btn-ai-align');
+    const token = getAuthToken();
+    statusEl.style.display = 'block';
+    if (!token) {
+        statusEl.textContent = 'Faça login no sistema pra usar o alinhamento por IA.';
+        return;
+    }
+
+    btn.disabled = true;
+    statusEl.textContent = 'Analisando a imagem com IA... (pode levar alguns segundos)';
+    try {
+        const formData = new FormData();
+        formData.append('image', refImage.file, refImage.name);
+        const res = await fetch('/api/pattern/detect-landmarks', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(payload.error || 'Falha ao detectar pontos na imagem.');
+
+        const lm = payload.landmarks;
+        const toPx = p => [p.x / 1000 * refImage.natW, p.y / 1000 * refImage.natH];
+        const apexPx = toPx(lm.apex);
+        const eqLPx = toPx(lm.equator_left);
+        const eqRPx = toPx(lm.equator_right);
+        const bottomPx = toPx(lm.bottom_tip);
+        const equatorMidPx = [(eqLPx[0] + eqRPx[0]) / 2, (eqLPx[1] + eqRPx[1]) / 2];
+
+        const topLay = layoutTopLocal(coneN);
+        const botLay = layoutBotLocal(coneN);
+        if (topLay) {
+            const apexLocal = [(topLay.minX + topLay.maxX) / 2, topLay.minY];
+            const baseLocal = [(topLay.minX + topLay.maxX) / 2, topLay.maxY];
+            const t = similarityFromTwoPoints(topLay, apexLocal, apexPx, baseLocal, equatorMidPx);
+            if (isFinite(t.scale) && t.scale > 0.001) gridTTop = t;
+        }
+        if (botLay) {
+            const joinLocal = [(botLay.minX + botLay.maxX) / 2, botLay.minY];
+            const mouthLocal = [(botLay.minX + botLay.maxX) / 2, botLay.maxY];
+            const t = similarityFromTwoPoints(botLay, joinLocal, equatorMidPx, mouthLocal, bottomPx);
+            if (isFinite(t.scale) && t.scale > 0.001) gridTBot = t;
+        }
+        redraw();
+        statusEl.textContent = 'Prontinho — ajuste fino se precisar (arrastando ou nos campos).';
+    } catch (e) {
+        statusEl.textContent = 'Erro: ' + e.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// ================== CONTORNO MANUAL ==================
+function startContour(mode) {
+    if (!refImage) { alert('Envie a imagem do cliente primeiro.'); return; }
+    contourMode = mode;
+    contourPoints = [];
+    document.getElementById('contour-tool-actions').style.display = 'flex';
+    redraw();
+}
+function finishContour() {
+    if (contourPoints.length < 3) { cancelContour(); return; }
+    const flattened = flattenContourPoints(contourPoints);
+    if (contourMode === 'ponta') pontaContourPoly = flattened;
+    else if (contourMode === 'boca') bocaContourPoly = flattened;
+    contourMode = null;
+    contourPoints = [];
+    document.getElementById('contour-tool-actions').style.display = 'none';
+    document.getElementById('btn-contour-clear').style.display = (pontaContourPoly || bocaContourPoly) ? '' : 'none';
+    if (pontaContourPoly || bocaContourPoly) revealMoldeAndGrade();
+    redraw();
+}
+
+/** Molde e Grade do cone ficam escondidos ate o cliente terminar pelo
+ * menos um contorno -- a ideia e o fluxo ser sempre imagem -> contorno
+ * (define o tamanho exato) -> molde -> qtd. de gomos. */
+function revealMoldeAndGrade() {
+    document.getElementById('card-params').style.display = '';
+    document.getElementById('card-grid').style.display = '';
+}
+/** Tira o ultimo ponto marcado (com a curva dele, se tinha) -- pra corrigir
+ * um clique/arrasto errado sem precisar cancelar o contorno inteiro. */
+function undoContourPoint() {
+    if (!contourMode || !contourPoints.length) return;
+    contourPoints.pop();
+    redraw();
+}
+function cancelContour() {
+    contourMode = null;
+    contourPoints = [];
+    document.getElementById('contour-tool-actions').style.display = 'none';
+    redraw();
+}
+function clearContours() {
+    pontaContourPoly = null;
+    bocaContourPoly = null;
+    document.getElementById('btn-contour-clear').style.display = 'none';
+    redraw();
+}
+
+// ================== INTERAÇÃO (mover / redimensionar / girar / pan) ==================
+function onPointerDown(e) {
+    const pt = clientToSvg(e);
+    const world = screenToWorld(pt.x, pt.y);
+
+    if (contourMode) {
+        if (contourPoints.length >= 3) {
+            const first = contourPoints[0];
+            const distPx = Math.hypot(world.x - first.x, world.y - first.y) * view.scale;
+            if (distPx < 14) { finishContour(); return; }
+        }
+        contourPoints.push({ x: world.x, y: world.y, handle: null });
+        dragMode = 'contour-point';
+        dragStartWorld = world;
+        isPointerDown = true;
+        redraw();
+        return;
+    }
+
+    const halves = [];
+    if (!pontaContourPoly && currentTopLay) halves.push({ lay: currentTopLay, t: gridTTop });
+    if (!bocaContourPoly && currentBotLay) halves.push({ lay: currentBotLay, t: gridTBot });
+
+    // 1) alça de girar tem prioridade, depois a de redimensionar, depois o
+    // corpo da grade (mover) — checa as duas metades em cada passo antes de
+    // cair pro próximo tipo de alça.
+    for (const { lay, t } of halves) {
+        const rotLocal = [(lay.minX + lay.maxX) / 2, lay.minY - rotateGapLocal(lay)];
+        if (hitHandle(lay, t, world.x, world.y, rotLocal, 14)) {
+            dragMode = 'rotate';
+            dragTargetT = t; dragTargetLay = lay;
+            dragCenterWorld = localToWorld(lay, t, (lay.minX + lay.maxX) / 2, (lay.minY + lay.maxY) / 2);
+            isPointerDown = true;
+            return;
+        }
+    }
+    for (const { lay, t } of halves) {
+        if (hitHandle(lay, t, world.x, world.y, [lay.maxX, lay.maxY], 12)) {
+            dragMode = 'scale';
+            dragTargetT = t; dragTargetLay = lay;
+            dragCenterWorld = localToWorld(lay, t, (lay.minX + lay.maxX) / 2, (lay.minY + lay.maxY) / 2);
+            dragStartDist = Math.max(distWorld([world.x, world.y], dragCenterWorld), 1e-6);
+            dragStartScale = t.scale;
+            isPointerDown = true;
+            return;
+        }
+    }
+    for (const { lay, t } of halves) {
+        if (pointInGrid(lay, t, world.x, world.y)) {
+            dragMode = 'move';
+            dragTargetT = t; dragTargetLay = lay;
+            dragStartWorld = world;
+            dragOrigGrid = { x: t.x, y: t.y };
+            isPointerDown = true;
+            return;
+        }
+    }
+
+    dragMode = 'pan';
+    dragStartPt = pt;
+    dragStartView = { x: view.x, y: view.y };
+    isPointerDown = true;
+}
+
+function onPointerMove(e) {
+    if (!isPointerDown) return;
+    const pt = clientToSvg(e);
+    const world = screenToWorld(pt.x, pt.y);
+
+    if (dragMode === 'contour-point') {
+        const p = contourPoints[contourPoints.length - 1];
+        const dx = world.x - dragStartWorld.x, dy = world.y - dragStartWorld.y;
+        p.handle = (Math.hypot(dx, dy) * view.scale > 4) ? { dx, dy } : null;
+        redraw();
+    } else if (dragMode === 'move' && dragTargetT) {
+        dragTargetT.x = dragOrigGrid.x + (world.x - dragStartWorld.x);
+        dragTargetT.y = dragOrigGrid.y + (world.y - dragStartWorld.y);
+        redraw();
+    } else if (dragMode === 'scale' && dragTargetT) {
+        const d = Math.max(distWorld([world.x, world.y], dragCenterWorld), 1e-6);
+        dragTargetT.scale = Math.max(0.02, dragStartScale * (d / dragStartDist));
+        redraw();
+    } else if (dragMode === 'rotate' && dragTargetT) {
+        const ang = Math.atan2(world.x - dragCenterWorld[0], -(world.y - dragCenterWorld[1])) * 180 / Math.PI;
+        dragTargetT.rot = ang;
+        redraw();
+    } else if (dragMode === 'pan') {
+        view.x = dragStartView.x + (pt.x - dragStartPt.x);
+        view.y = dragStartView.y + (pt.y - dragStartPt.y);
+        redraw();
+    }
+}
+
+function onPointerUp() {
+    isPointerDown = false;
+    dragMode = null;
+    dragTargetT = null;
+    dragTargetLay = null;
+}
+
+function onWheel(e) {
+    e.preventDefault();
+    const pt = clientToSvg(e);
+    const before = screenToWorld(pt.x, pt.y);
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    view.scale = Math.max(0.02, Math.min(40, view.scale * factor));
+    const after = screenToWorld(pt.x, pt.y);
+    view.x = pt.x - before.x * view.scale;
+    view.y = pt.y - before.y * view.scale;
+    redraw();
+}
+
+// ================== INIT ==================
+document.getElementById('btn-apply').onclick = () => {
+    rebuildMold();
+    fitView();
+    redraw();
+};
+document.getElementById('btn-build-cone').onclick = () => {
+    coneN = Math.max(1, parseInt(document.getElementById('param-cone-n').value, 10) || 8);
+    gridGenerated = true;
+    redraw();
+};
+document.getElementById('btn-reset-grid').onclick = () => {
+    resetGridTransforms();
+    redraw();
+};
+document.getElementById('grid-opacity').addEventListener('input', e => {
+    gridOpacity = parseFloat(e.target.value) || 0.6;
+    redraw();
+});
+document.getElementById('btn-add-image').onclick = () => {
+    document.getElementById('image-file-input').click();
+};
+document.getElementById('image-file-input').addEventListener('change', e => {
+    const file = (e.target.files || [])[0];
+    if (file) setRefImageFromFile(file);
+    e.target.value = '';
+});
+document.getElementById('btn-remove-image').onclick = removeRefImage;
+document.getElementById('btn-ai-align').onclick = alignWithAI;
+document.getElementById('btn-contour-ponta').onclick = () => startContour('ponta');
+document.getElementById('btn-contour-boca').onclick = () => startContour('boca');
+document.getElementById('btn-contour-undo').onclick = undoContourPoint;
+document.getElementById('btn-contour-finish').onclick = finishContour;
+document.getElementById('btn-contour-cancel').onclick = cancelContour;
+document.getElementById('btn-contour-clear').onclick = clearContours;
+
+document.getElementById('zoom-in').onclick = () => {
+    const svg = document.getElementById('lek-svg');
+    const cx = svg.clientWidth / 2, cy = svg.clientHeight / 2;
+    const before = screenToWorld(cx, cy);
+    view.scale = Math.min(40, view.scale * 1.2);
+    view.x = cx - before.x * view.scale;
+    view.y = cy - before.y * view.scale;
+    redraw();
+};
+document.getElementById('zoom-out').onclick = () => {
+    const svg = document.getElementById('lek-svg');
+    const cx = svg.clientWidth / 2, cy = svg.clientHeight / 2;
+    const before = screenToWorld(cx, cy);
+    view.scale = Math.max(0.02, view.scale / 1.2);
+    view.x = cx - before.x * view.scale;
+    view.y = cy - before.y * view.scale;
+    redraw();
+};
+document.getElementById('zoom-fit').onclick = () => { fitView(); redraw(); };
+
+const svgElRoot = document.getElementById('lek-svg');
+svgElRoot.addEventListener('pointerdown', onPointerDown);
+window.addEventListener('pointermove', onPointerMove);
+window.addEventListener('pointerup', onPointerUp);
+document.getElementById('workspace').addEventListener('wheel', onWheel, { passive: false });
+window.addEventListener('resize', () => { fitView(); redraw(); });
+
+loadData();
+</script>
+</body>
+</html>

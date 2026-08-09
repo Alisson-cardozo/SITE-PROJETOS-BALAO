@@ -36,7 +36,7 @@ final class MoldProjectController
             return Response::json(['error' => 'Usuario nao encontrado.'], 404);
         }
 
-        $items = $this->projects->listAll();
+        $items = $this->projects->listByUserId((int) $user['id']);
         $data = array_map(fn (array $project) => $this->withPermissions($project, $user), $items);
 
         return Response::json(['data' => $data]);

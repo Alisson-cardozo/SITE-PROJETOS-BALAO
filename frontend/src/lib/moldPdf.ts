@@ -82,6 +82,9 @@ const JOIN_LINE_CM = 0.18;
  * TEXTO do jsPDF some silenciosamente acima de uma certa altura de pagina).
  */
 const CAPTION_H_CM = 1.3;
+/** Largura reservada do lado direito do desenho pra regua de cada reparticao
+ * (tacos subindo, altura do taco, metragem da parte, tacos/gomo). */
+const RULER_EXTRA_CM = 6.5;
 
 /**
  * Desenha o contorno + grade de tacos + bainhas de UM perfil (molde inteiro OU
@@ -94,14 +97,14 @@ function drawProfile(
   profile: MoldProfile,
   tacoConfigs: SectionTacoConfigMap,
   originXcm: number,
-  originYcm: number
+  originYcm: number,
+  bainhaCm: number = 1.0
 ): void {
   const { points, alturaTotalCm, larguraMaximaCm, secoes } = profile;
   const maxHalf = Math.max(larguraMaximaCm / 2, 0.1);
   const centerXcm = originXcm + maxHalf;
 
   const mapXAbs = (xCm: number) => centerXcm + xCm;
-  const mapXSigned = (half: number, sign: 1 | -1) => centerXcm + sign * half;
   const mapY = (yCm: number) => originYcm + (alturaTotalCm - yCm);
 
   const BOUNDARY_EPS = BAINHA_JUNTA_CM + 0.15;
@@ -110,7 +113,7 @@ function drawProfile(
     const cfg = tacoConfigs[secao.id] ?? { partitions: [] };
     const bands = expandSectionPartitions(secao, cfg);
     return bands.map((band, bandIndexInParent) => {
-      const raw = buildTacoDivisions(band, band.flatConfig, points);
+      const raw = buildTacoDivisions(band, band.flatConfig, points, bainhaCm);
       const divisions = {
         ...raw,
         horizontals: raw.horizontals.filter(
@@ -174,18 +177,103 @@ function drawProfile(
     }
   }
 
+  // Silhueta de corte externa expandida
   doc.setDrawColor(...CUT_COLOR);
   doc.setLineWidth(OUTLINE_LINE_CM);
-  const outline = [
-    ...points.map((p) => [mapXSigned(p.halfWidthCm, -1), mapY(p.yCm)] as [number, number]),
-    ...[...points].reverse().map((p) => [mapXSigned(p.halfWidthCm, 1), mapY(p.yCm)] as [number, number]),
-  ];
+
+  const outline: Array<[number, number]> = [];
+  // Lado esquerdo (da boca ate a ponta)
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    outline.push([mapXAbs(-p.halfWidthCm - 1.0), mapY(p.yCm)]);
+  }
+  // Lado direito (da ponta ate a boca)
+  for (let i = points.length - 1; i >= 0; i--) {
+    const p = points[i];
+    outline.push([mapXAbs(p.halfWidthCm), mapY(p.yCm)]);
+  }
+
   drawPolyline(doc, outline, true);
 
   for (const boundary of divisionBoundaries) {
     doc.setDrawColor(...boundary.colorRgb);
     doc.setLineWidth(JOIN_LINE_CM);
-    doc.line(mapXSigned(boundary.halfCm, -1), mapY(boundary.yCm), mapXSigned(boundary.halfCm, 1), mapY(boundary.yCm));
+    doc.line(mapXAbs(-boundary.halfCm), mapY(boundary.yCm), mapXAbs(boundary.halfCm), mapY(boundary.yCm));
+  }
+
+  // Regua lateral por reparticao (direita do molde): qt de tacos subindo,
+  // altura do taco, metragem dessa parte e tacos/gomo — mesma info da tela.
+  {
+    const rulerX = centerXcm + maxHalf + 1.2;
+    const tickLen = 0.35;
+    const textX = rulerX + tickLen + 0.15;
+    const lineGap = 0.34;
+
+    for (const band of sectionBands) {
+      if (band.divisions.totalTacos <= 0) {
+        continue;
+      }
+      const yTop = mapY(band.secao.fimCm);
+      const yBottom = mapY(band.secao.inicioCm);
+
+      doc.setDrawColor(30, 41, 59);
+      doc.setLineWidth(GRID_LINE_CM);
+      doc.line(rulerX, yTop, rulerX, yBottom);
+      doc.line(rulerX - tickLen, yTop, rulerX, yTop);
+      doc.line(rulerX - tickLen, yBottom, rulerX, yBottom);
+
+      const yMid = (yTop + yBottom) / 2;
+      let ty = yMid - lineGap;
+      doc.setTextColor(30, 41, 59);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.text(`${band.divisions.quantidadeVertical} tacos subindo`, textX, ty);
+      doc.setFont('helvetica', 'normal');
+      ty += lineGap;
+      doc.text(`Taco: ${formatCm(band.config.alturaTacoCm)} altura`, textX, ty);
+      ty += lineGap;
+      doc.text(`${formatCm(band.secao.alturaCm)} nesta parte`, textX, ty);
+      ty += lineGap;
+      doc.text(`${band.config.tacosPorGomo} tacos/gomo`, textX, ty);
+    }
+  }
+
+  // Desenha as réguas na base (Y = 0)
+  const halfBase = points[0]?.halfWidthCm ?? 0;
+  if (halfBase > 0.1) {
+    const wBaseReal = halfBase * 2;
+    const wBaseTotal = wBaseReal + 1.0;
+
+    // 1. Régua Interna (Molde Útil) - Verde Escuro [61, 122, 77]
+    doc.setDrawColor(61, 122, 77);
+    doc.setLineWidth(GRID_LINE_CM);
+    // Linhas de chamada
+    doc.line(mapXAbs(-halfBase), mapY(0), mapXAbs(-halfBase), mapY(-1.8));
+    doc.line(mapXAbs(halfBase), mapY(0), mapXAbs(halfBase), mapY(-1.8));
+    // Linha de cota
+    doc.line(mapXAbs(-halfBase), mapY(-1.5), mapXAbs(halfBase), mapY(-1.5));
+    // Ticks
+    doc.line(mapXAbs(-halfBase), mapY(-1.8), mapXAbs(-halfBase), mapY(-1.2));
+    doc.line(mapXAbs(halfBase), mapY(-1.8), mapXAbs(halfBase), mapY(-1.2));
+    // Texto
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(61, 122, 77);
+    doc.text(`${formatCm(wBaseReal)} (Molde util)`, centerXcm, mapY(-1.5) - 0.15, { align: 'center' });
+
+    // 2. Régua Externa (Corte Total com Bainhas) - Azul Escuro [30, 64, 175]
+    doc.setDrawColor(30, 64, 175);
+    // Linhas de chamada
+    doc.line(mapXAbs(-halfBase - 1.0), mapY(0), mapXAbs(-halfBase - 1.0), mapY(-3.3));
+    doc.line(mapXAbs(halfBase), mapY(0), mapXAbs(halfBase), mapY(-3.3));
+    // Linha de cota
+    doc.line(mapXAbs(-halfBase - 1.0), mapY(-3.0), mapXAbs(halfBase), mapY(-3.0));
+    // Ticks
+    doc.line(mapXAbs(-halfBase - 1.0), mapY(-3.3), mapXAbs(-halfBase - 1.0), mapY(-2.7));
+    doc.line(mapXAbs(halfBase), mapY(-3.3), mapXAbs(halfBase), mapY(-2.7));
+    // Texto
+    doc.setTextColor(30, 64, 175);
+    doc.text(`${formatCm(wBaseTotal)} (Corte total)`, centerXcm - 0.25, mapY(-3.0) - 0.15, { align: 'center' });
   }
 }
 
@@ -419,23 +507,44 @@ function drawJunctionMark(
   centerXcm: number,
   mapY: (yCm: number) => number,
   yCm: number,
-  /** true = esta e a folha "de baixo" da uniao — ganha a bainha de 1cm (a
-   * bainha sempre fica na parte de baixo, mesma regra da junta entre secoes).
-   * false = folha "de cima" — nao ganha marca nenhuma, so o contorno normal. */
-  isLowerSide: boolean
+  mode: 'upper-cut' | 'lower-overlap'
 ): void {
-  if (!isLowerSide) {
-    return;
+  const half = interpolateHalfWidth(yCm, points);
+  
+  if (mode === 'upper-cut') {
+    // Linha de corte sólida cinza clara na base da página de cima
+    doc.setDrawColor(180, 180, 180);
+    doc.setLineWidth(0.015);
+    doc.line(centerXcm - half, mapY(yCm), centerXcm + half, mapY(yCm));
+    
+    // Texto explicativo pequeno
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(140, 140, 140);
+    doc.text("CORTE AQUI PARA JUNTAR AS PAGINAS", centerXcm, mapY(yCm) - 0.15, { align: 'center' });
+  } else {
+    // Linha sólida cinza de encontro no topo da página de baixo
+    doc.setDrawColor(180, 180, 180);
+    doc.setLineWidth(0.015);
+    doc.line(centerXcm - half, mapY(yCm), centerXcm + half, mapY(yCm));
+    
+    // Linha tracejada da bainha de junta (limite da sobreposição a 1cm do topo)
+    const yHemCm = Math.max(0, yCm - BAINHA_JUNTA_CM);
+    const halfHem = interpolateHalfWidth(yHemCm, points);
+    const yHem = mapY(yHemCm);
+    
+    doc.setDrawColor(...HEM_COLOR);
+    doc.setLineWidth(JUNCTION_HEM_LINE_CM);
+    doc.setLineDashPattern(JUNCTION_HEM_DASH_CM, 0);
+    doc.line(centerXcm - halfHem, yHem, centerXcm + halfHem, yHem);
+    doc.setLineDashPattern([], 0);
+    
+    // Texto de guia
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(...HEM_COLOR);
+    doc.text("LINHA DE SOBREPOSICAO (COLE A FOLHA DE CIMA ATE AQUI)", centerXcm, yHem - 0.15, { align: 'center' });
   }
-
-  const yHemCm = Math.max(0, yCm - BAINHA_JUNTA_CM);
-  const halfHem = interpolateHalfWidth(yHemCm, points);
-  const yHem = mapY(yHemCm);
-  doc.setDrawColor(...HEM_COLOR);
-  doc.setLineWidth(JUNCTION_HEM_LINE_CM);
-  doc.setLineDashPattern(JUNCTION_HEM_DASH_CM, 0);
-  doc.line(centerXcm - halfHem, yHem, centerXcm + halfHem, yHem);
-  doc.setLineDashPattern([], 0);
 }
 
 /**
@@ -461,21 +570,23 @@ function addDrawingPages(
   label: string,
   subtitle: string,
   rowHeightCm: number | null,
-  /** Chamado com (mapY, centerXcm) da PRIMEIRA pagina — pra marcar uniao com a peca anterior. */
+  bainhaCm: number = 1.0,
   onFirstPageTop?: (mapY: (yCm: number) => number, centerXcm: number) => void,
-  /** Chamado com (mapY, centerXcm) da ULTIMA pagina — pra marcar uniao com a proxima peca. */
   onLastPageBottom?: (mapY: (yCm: number) => number, centerXcm: number) => void
 ): void {
   const totalH = profile.alturaTotalCm;
-  const drawX = MARGIN_CM + (pageWidthCm - MARGIN_CM * 2 - profile.larguraMaximaCm) / 2;
+  // Centraliza o molde no espaco disponivel MENOS a faixa reservada da regua
+  // lateral (senao a regua ficaria espremida ou cortada do lado direito).
+  const drawX = MARGIN_CM + (pageWidthCm - MARGIN_CM * 2 - RULER_EXTRA_CM - profile.larguraMaximaCm) / 2;
   const maxHalf = Math.max(profile.larguraMaximaCm / 2, 0.1);
   const centerXcm = drawX + maxHalf;
 
   if (totalH <= MAX_DRAWABLE_CM) {
-    const pageH = totalH + MARGIN_CM * 2 + CAPTION_H_CM;
+    // Adiciona 3.5cm extras para as réguas e cota da base não serem cortadas na impressão
+    const pageH = totalH + MARGIN_CM * 2 + CAPTION_H_CM + 3.5;
     doc.addPage([pageWidthCm, pageH], orientationFor(pageWidthCm, pageH));
     drawCaption(doc, pageWidthCm, color, label, subtitle);
-    drawProfile(doc, profile, tacoConfigs, drawX, MARGIN_CM + CAPTION_H_CM);
+    drawProfile(doc, profile, tacoConfigs, drawX, MARGIN_CM + CAPTION_H_CM, bainhaCm);
     const mapY = (yCm: number) => MARGIN_CM + CAPTION_H_CM + (totalH - yCm);
     onFirstPageTop?.(mapY, centerXcm);
     onLastPageBottom?.(mapY, centerXcm);
@@ -502,18 +613,24 @@ function addDrawingPages(
   for (let index = 0; index < totalPages; index += 1) {
     const spanTop = breakpoints[index];
     const spanBottom = breakpoints[index + 1];
-    const pageH = spanTop - spanBottom + MARGIN_CM * 2 + CAPTION_H_CM;
+    
+    // Se for a última página do desenho (onde spanBottom === 0, ou seja, a base física),
+    // adicionamos 3.5cm extras de espaço no rodapé para as réguas e cota da base.
+    const isBasePage = spanBottom === 0;
+    const extraBottomCm = isBasePage ? 3.5 : 0;
+    
+    const pageH = spanTop - spanBottom + MARGIN_CM * 2 + CAPTION_H_CM + extraBottomCm;
     doc.addPage([pageWidthCm, pageH], orientationFor(pageWidthCm, pageH));
     drawCaption(doc, pageWidthCm, color, label, `${subtitle} · parte ${index + 1} de ${totalPages}`);
     const originY = MARGIN_CM + CAPTION_H_CM - (totalH - spanTop);
     const mapY = (yCm: number) => originY + (totalH - yCm);
-    drawProfile(doc, profile, tacoConfigs, drawX, originY);
+    drawProfile(doc, profile, tacoConfigs, drawX, originY, bainhaCm);
 
     if (index < totalPages - 1) {
-      drawJunctionMark(doc, profile.points, centerXcm, mapY, spanBottom, false);
+      drawJunctionMark(doc, profile.points, centerXcm, mapY, spanBottom, 'upper-cut');
     }
     if (index > 0) {
-      drawJunctionMark(doc, profile.points, centerXcm, mapY, spanTop, true);
+      drawJunctionMark(doc, profile.points, centerXcm, mapY, spanTop, 'lower-overlap');
     }
     if (index === 0) {
       onFirstPageTop?.(mapY, centerXcm);
@@ -542,19 +659,24 @@ export function buildMoldPdf(options: MoldPdfOptions): Blob {
     options.pontos,
     options.plotterConfig.taco_configs,
     options.plotterConfig.section_ratios,
-    options.plotterConfig.section_colors
+    options.plotterConfig.section_colors,
+    options.bainhaCm
   );
   const fullProfile = showWhole ? buildMoldProfile(options.pontos, options.plotterConfig.section_ratios, options.plotterConfig.taco_configs) : null;
   const totals = computeSectionTacoTotals(
     options.pontos,
     options.plotterConfig.taco_configs,
-    options.plotterConfig.section_ratios
+    options.plotterConfig.section_ratios,
+    options.bainhaCm
   );
 
-  const widestPiece = Math.max(0, ...pieces.map((p) => p.larguraMaximaCm));
-  const widestWhole = fullProfile?.larguraMaximaCm ?? 0;
+  const widestPiece = Math.max(0, ...pieces.map((p) => p.larguraMaximaCm + 1.5));
+  const widestWhole = fullProfile ? fullProfile.larguraMaximaCm + 1.5 : 0;
   const infoWidthCm = MIN_WIDTH_CM;
-  const drawingWidthCm = Math.max(MIN_WIDTH_CM, Math.max(widestPiece, widestWhole) + MARGIN_CM * 2 + 3);
+  const drawingWidthCm = Math.max(
+    MIN_WIDTH_CM,
+    Math.max(widestPiece, widestWhole) + MARGIN_CM * 2 + 3 + RULER_EXTRA_CM
+  );
 
   // jsPDF troca largura/altura sozinho se width > height e a orientacao nao for
   // dita explicitamente como 'l' (o padrao 'p'/portrait exige altura >= largura)
@@ -583,7 +705,8 @@ export function buildMoldPdf(options: MoldPdfOptions): Blob {
       '#2563eb',
       'Molde inteiro',
       formatCm(fullProfile.alturaTotalCm),
-      null
+      null,
+      options.bainhaCm
     );
   }
 
@@ -610,11 +733,12 @@ export function buildMoldPdf(options: MoldPdfOptions): Blob {
         piece.label,
         pieceSubtitle(piece),
         piece.alturaTacoCm,
+        options.bainhaCm,
         joinsWithPrev
-          ? (mapY, centerXcm) => drawJunctionMark(doc, piece.profile.points, centerXcm, mapY, piece.alturaCm, true)
+          ? (mapY, centerXcm) => drawJunctionMark(doc, piece.profile.points, centerXcm, mapY, piece.alturaCm, 'lower-overlap')
           : undefined,
         joinsWithNext
-          ? (mapY, centerXcm) => drawJunctionMark(doc, piece.profile.points, centerXcm, mapY, 0, false)
+          ? (mapY, centerXcm) => drawJunctionMark(doc, piece.profile.points, centerXcm, mapY, 0, 'upper-cut')
           : undefined
       );
     });

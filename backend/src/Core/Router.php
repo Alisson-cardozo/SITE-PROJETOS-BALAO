@@ -12,12 +12,17 @@ final class Router
      *   pattern: string,
      *   paramNames: array<int,string>,
      *   handler: mixed,
-     *   middlewares: array<int, array{0: class-string, 1: string}>
+     *   middlewares: array<int, array{0: class-string, 1: string}|\Closure>
      * }>
      */
     private array $routes = [];
 
-    /** @param array<int, array{0: class-string, 1: string}> $middlewares */
+    /**
+     * @param array<int, array{0: class-string, 1: string}|\Closure> $middlewares
+     *   Cada item e um par [Classe::class, 'metodo'] OU uma Closure(Request): ?Response
+     *   (usada quando o middleware precisa de um parametro fixo por rota, ex.:
+     *   AbaAccessMiddleware — ver helper abaMiddleware() em routes/api.php).
+     */
     public function add(string $method, string $path, mixed $handler, array $middlewares = []): void
     {
         $paramNames = [];
@@ -56,8 +61,13 @@ final class Router
             array_shift($matches);
             $request->params = array_combine($route['paramNames'], $matches) ?: [];
 
-            foreach ($route['middlewares'] as [$class, $method]) {
-                $result = (new $class())->$method($request);
+            foreach ($route['middlewares'] as $middleware) {
+                if ($middleware instanceof \Closure) {
+                    $result = $middleware($request);
+                } else {
+                    [$class, $method] = $middleware;
+                    $result = (new $class())->$method($request);
+                }
                 if ($result instanceof Response) {
                     return $result;
                 }

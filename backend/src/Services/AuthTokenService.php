@@ -8,17 +8,19 @@ use App\Support\Db;
 
 final class AuthTokenService
 {
-    public function issue(int $userId): string
+    public function issue(int $userId, ?string $device = null): string
     {
         $token = bin2hex(random_bytes(32));
         $hash = hash('sha256', $token);
 
         $stmt = Db::connection()->prepare(
-            'INSERT INTO api_tokens (user_id, token_hash, created_at) VALUES (:user_id, :token_hash, NOW())'
+            'INSERT INTO api_tokens (user_id, token_hash, device, last_used_at, created_at)
+             VALUES (:user_id, :token_hash, :device, NOW(), NOW())'
         );
         $stmt->execute([
             'user_id' => $userId,
             'token_hash' => $hash,
+            'device' => $device,
         ]);
 
         return $token;

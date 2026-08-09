@@ -19,3 +19,14 @@ export function slugifyFilename(value: string): string {
       .toLowerCase() || 'molde'
   );
 }
+
+export function downloadCanvasAsPng(canvas: HTMLCanvasElement, filename: string): void {
+  const dataUrl = canvas.toDataURL('image/png');
+  const link = document.createElement('a');
+  link.href = dataUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+

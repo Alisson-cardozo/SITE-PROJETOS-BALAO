@@ -44,17 +44,17 @@ export function computeGridSize(widthCm: number, heightCm: number): BandeiraGrid
   };
 }
 
-export function gridSizeExceedsLimit(size: BandeiraGridSize): boolean {
-  return size.widthPx > MAX_GRID_SIDE || size.heightPx > MAX_GRID_SIDE || size.widthPx * size.heightPx > MAX_GRID_CELLS;
+export function gridSizeExceedsLimit(_size: BandeiraGridSize): boolean {
+  return false;
 }
 
 /** Teto da grade FINAL (ja expandida pro tamanho real, 1 celula = 1cm) — bem
  * maior que o teto da grade de trabalho, mas ainda existe pra nao travar o
  * navegador de vez com um pedido absurdo (tipo 50m x 50m). */
-export const MAX_EXPANDED_CELLS = 3_000_000;
+export const MAX_EXPANDED_CELLS = 300_000_000;
 
-export function expandedSizeExceedsLimit(widthCm: number, heightCm: number): boolean {
-  return Math.round(widthCm) * Math.round(heightCm) > MAX_EXPANDED_CELLS;
+export function expandedSizeExceedsLimit(_widthCm: number, _heightCm: number): boolean {
+  return false;
 }
 
 /**
@@ -381,3 +381,61 @@ export function decodeGridRuns(runs: BandeiraGridRun[]): string[] {
   }
   return colors;
 }
+
+/** Le uma imagem na sua resolucao nativa sem taquear ou reduzir cores.
+ * Usado por "Importar Projeto Pronto" pra pular a parte de tamanho/quantidade de cores. */
+export async function readBandeiraNativePixelGrid(
+  file: File,
+  maxDim: number = 2000
+): Promise<{ widthPx: number; heightPx: number; colors: string[] }> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const nextImage = new Image();
+      nextImage.onload = () => resolve(nextImage);
+      nextImage.onerror = () => reject(new Error('Nao foi possivel ler a imagem.'));
+      nextImage.src = objectUrl;
+    });
+
+    let w = img.naturalWidth || img.width || 100;
+    let h = img.naturalHeight || img.height || 100;
+
+    if (w > maxDim || h > maxDim) {
+      const scale = Math.min(maxDim / w, maxDim / h);
+      w = Math.max(1, Math.round(w * scale));
+      h = Math.max(1, Math.round(h * scale));
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Nao foi possivel criar o canvas de leitura.');
+
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, 0, 0, w, h);
+
+    const imageData = ctx.getImageData(0, 0, w, h);
+    const data = imageData.data;
+    const rawColors: string[] = [];
+
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const a = data[i + 3];
+
+      if (a < 128) {
+        rawColors.push('#ffffff');
+      } else {
+        const hex = '#' + [r, g, b].map((x) => x.toString(16).padStart(2, '0')).join('');
+        rawColors.push(hex);
+      }
+    }
+
+    return { widthPx: w, heightPx: h, colors: snapNearBlackToBlack(rawColors) };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+

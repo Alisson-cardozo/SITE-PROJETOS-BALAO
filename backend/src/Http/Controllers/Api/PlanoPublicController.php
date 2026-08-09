@@ -29,6 +29,9 @@ final class PlanoPublicController
                 'nome' => $plano['nome'],
                 'valor' => $plano['valor'],
                 'dias_acesso' => $plano['dias_acesso'],
+                'abas' => $plano['abas'],
+                'show_in_ranking' => $plano['show_in_ranking'] ?? false,
+                'sales_override_count' => $plano['sales_override_count'] ?? 0,
             ],
             $this->planos->listAll(false)
         );

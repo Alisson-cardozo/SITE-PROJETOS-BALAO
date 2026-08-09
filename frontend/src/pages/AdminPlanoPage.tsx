@@ -3,7 +3,10 @@ import { Check, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { numericFieldProps } from '../lib/numericInput';
+import { PLANO_ABA_GROUPS } from '../config/userNavigation';
 import type { Plano } from '../types';
+
+const ALL_ABA_IDS = PLANO_ABA_GROUPS.map((g) => g.id);
 
 function formatMoeda(valor: number): string {
   return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -21,6 +24,10 @@ export function AdminPlanoPage() {
   const [removingToken, setRemovingToken] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsSuccess, setSettingsSuccess] = useState(false);
+  // So pra mostrar o aviso "Em breve" (etc) no checklist -- ver AdminTabsPage,
+  // onde esses rotulos sao configurados por aba escondida.
+  const [hiddenAbaIds, setHiddenAbaIds] = useState<Set<string>>(new Set());
+  const [abaLabels, setAbaLabels] = useState<Record<string, string>>({});
 
   const loadSettings = useCallback(async () => {
     if (!token) return;
@@ -31,6 +38,8 @@ export function AdminPlanoPage() {
       setMercadoPagoPublicKey(response.data.mercado_pago_public_key ?? '');
       setAccessTokenConfigured(response.data.mercado_pago_access_token_configured);
       setMercadoPagoAccessToken('');
+      setHiddenAbaIds(new Set(response.data.hidden_nav_items));
+      setAbaLabels(response.data.nav_item_labels);
     } catch (err) {
       setSettingsError(err instanceof ApiError ? err.message : 'Nao foi possivel carregar as credenciais.');
     } finally {
@@ -96,6 +105,9 @@ export function AdminPlanoPage() {
   const [formNome, setFormNome] = useState('');
   const [formValor, setFormValor] = useState('');
   const [formDias, setFormDias] = useState(0);
+  const [formAbas, setFormAbas] = useState<Set<string>>(new Set(ALL_ABA_IDS));
+  const [formShowInRanking, setFormShowInRanking] = useState(false);
+  const [formSalesOverrideCount, setFormSalesOverrideCount] = useState(0);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [savingPlano, setSavingPlano] = useState(false);
 
@@ -122,6 +134,9 @@ export function AdminPlanoPage() {
     setFormNome('');
     setFormValor('');
     setFormDias(0);
+    setFormAbas(new Set(ALL_ABA_IDS));
+    setFormShowInRanking(false);
+    setFormSalesOverrideCount(0);
     setFormErrors({});
     setShowForm(true);
   };
@@ -131,6 +146,9 @@ export function AdminPlanoPage() {
     setFormNome(plano.nome);
     setFormValor(String(plano.valor));
     setFormDias(plano.dias_acesso);
+    setFormAbas(new Set(plano.abas));
+    setFormShowInRanking(plano.show_in_ranking ?? false);
+    setFormSalesOverrideCount(plano.sales_override_count ?? 0);
     setFormErrors({});
     setShowForm(true);
   };
@@ -138,6 +156,15 @@ export function AdminPlanoPage() {
   const handleCancelForm = () => {
     setShowForm(false);
     setEditingId(null);
+  };
+
+  const toggleAba = (id: string) => {
+    setFormAbas((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   const handleSavePlano = async () => {
@@ -157,7 +184,14 @@ export function AdminPlanoPage() {
     setSavingPlano(true);
     setFormErrors({});
     try {
-      const payload = { nome, valor: round2(valor), dias_acesso: formDias };
+      const payload = {
+        nome,
+        valor: round2(valor),
+        dias_acesso: formDias,
+        abas: [...formAbas],
+        show_in_ranking: formShowInRanking,
+        sales_override_count: formSalesOverrideCount,
+      };
       if (editingId !== null) {
         await api.adminUpdatePlano(editingId, payload, token);
       } else {
@@ -294,7 +328,9 @@ export function AdminPlanoPage() {
                       <th>Nome</th>
                       <th>Valor</th>
                       <th>Dias de acesso</th>
+                      <th>Abas</th>
                       <th>Status</th>
+                      <th>Ranking</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -304,7 +340,15 @@ export function AdminPlanoPage() {
                         <td>{plano.nome}</td>
                         <td>{formatMoeda(plano.valor)}</td>
                         <td>{plano.dias_acesso}</td>
+                        <td
+                          title={PLANO_ABA_GROUPS.filter((g) => plano.abas.includes(g.id))
+                            .map((g) => g.label)
+                            .join(', ')}
+                        >
+                          {plano.abas.length}/{PLANO_ABA_GROUPS.length}
+                        </td>
                         <td>{plano.ativo ? 'Ativo' : 'Inativo'}</td>
+                        <td>{plano.show_in_ranking ? `✨ Sim (${plano.sales_override_count})` : 'Não'}</td>
                         <td className="rifa-compradores-actions">
                           <button
                             type="button"
@@ -376,6 +420,66 @@ export function AdminPlanoPage() {
                     <input type="number" min={1} {...numericFieldProps(formDias, setFormDias, 1)} placeholder="Ex: 30" />
                     {formErrors.dias_acesso ? <small className="auth-error">{formErrors.dias_acesso}</small> : null}
                   </label>
+                </div>
+
+                <div className="bandeira-size-fields" style={{ marginTop: '12px' }}>
+                  <label className="auth-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={formShowInRanking}
+                      onChange={(e) => setFormShowInRanking(e.target.checked)}
+                      style={{ width: 'auto', margin: 0 }}
+                    />
+                    <span>Mostrar no Ranking Público</span>
+                  </label>
+
+                  <label className="auth-field">
+                    <span>Vendas no Ranking (Simulado)</span>
+                    <input
+                      type="number"
+                      min={0}
+                      {...numericFieldProps(formSalesOverrideCount, setFormSalesOverrideCount, 0)}
+                      placeholder="Ex: 150"
+                    />
+                  </label>
+                </div>
+
+                <div className="auth-field">
+                  <span>Abas liberadas</span>
+                  <small className="bandeira-size-hint">
+                    O cliente que pagar esse plano so consegue usar as abas marcadas abaixo — as demais aparecem
+                    bloqueadas no menu dele, com opcao de fazer upgrade.
+                  </small>
+                </div>
+                <div className="admin-tabs-list">
+                  {PLANO_ABA_GROUPS.map((group) => {
+                    const Icon = group.icon;
+                    const checked = formAbas.has(group.id);
+                    const isHiddenSystemWide = hiddenAbaIds.has(group.id);
+                    const aviso = isHiddenSystemWide ? abaLabels[group.id] : undefined;
+                    return (
+                      <label key={group.id} className={`admin-tabs-row${checked ? '' : ' is-hidden'}`}>
+                        <div className="admin-tabs-row-info">
+                          <Icon size={18} />
+                          <div>
+                            <strong>
+                              {group.label}
+                              {isHiddenSystemWide ? (
+                                <em className="solicitar-acesso-aba-aviso admin-tabs-aba-aviso">
+                                  {aviso || 'aba oculta no sistema'}
+                                </em>
+                              ) : null}
+                            </strong>
+                            <span>{group.description}</span>
+                          </div>
+                        </div>
+                        <span className="rifa-checkbox-row admin-tabs-toggle">
+                          <input type="checkbox" checked={checked} onChange={() => toggleAba(group.id)} />
+                          <span>{checked ? 'Liberada' : 'Bloqueada'}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
                 </div>
 
                 <div className="admin-plano-form-actions">

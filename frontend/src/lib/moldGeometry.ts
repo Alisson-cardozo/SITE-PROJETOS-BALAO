@@ -267,6 +267,20 @@ export function profileToClosedPath(
   return `M ${[...left, ...right].join(' L ')} Z`;
 }
 
+export function profileToClosedPathAsymmetric(
+  slice: ProfilePoint[],
+  mapX: (wBanco: number, sign: 1 | -1) => number,
+  mapY: (yCm: number) => number
+): string {
+  if (slice.length === 0) {
+    return '';
+  }
+  const left = slice.map((p) => `${mapX(p.halfWidthCm, -1)},${mapY(p.yCm)}`);
+  const right = [...slice].reverse().map((p) => `${mapX(p.halfWidthCm, 1)},${mapY(p.yCm)}`);
+  return `M ${[...left, ...right].join(' L ')} Z`;
+}
+
+
 /** Bainha fina (cortes internos de taco + laterais finas). */
 export const BAINHA_FINA_CM = 0.5;
 /** Bainha grossa (lado esquerdo / fecho do gomo). */
@@ -497,77 +511,68 @@ export function expandSectionPartitions(
   secao: MoldSection,
   config: SectionTacoConfig
 ): Array<MoldSection & { partition: SectionPartition; flatConfig: FlatTacoConfig }> {
-  const parts = config.partitions;
+  let parts = [...config.partitions];
   if (parts.length === 0) {
     return [];
   }
-  const n = parts.length;
-  const weights = parts.map((p) => Math.max(0.01, Number(p.peso) || 1));
-  const weightSum = weights.reduce((s, w) => s + w, 0) || 1;
 
-  const hasManualTacos = parts.some((p) => p.tacosSubindo !== undefined);
+  // 1. Calcula a altura total útil já preenchida pelas configurações manuais
+  const totalPartsHeight = parts.reduce((sum, p) => sum + (p.tacosSubindo ?? 10) * p.alturaTacoCm, 0);
 
-  if (hasManualTacos) {
-    let yBottom = secao.inicioCm;
-    return parts.map((partition, index) => {
-      const isLast = index === n - 1;
-      const tacosSubindo = partition.tacosSubindo ?? 10;
-      const alturaCm = round1(tacosSubindo * partition.alturaTacoCm);
-      const inicioCm = round1(yBottom);
-      
-      let fimCm = round1(yBottom + alturaCm);
-      if (isLast && fimCm >= secao.fimCm - partition.alturaTacoCm) {
-        fimCm = secao.fimCm;
-      } else {
-        fimCm = round1(Math.min(secao.fimCm, fimCm));
-      }
-      yBottom = fimCm;
-
-      return {
-        ...secao,
-        nome: n > 1 ? `${secao.nome} ${index + 1}` : secao.nome,
-        cor: partition.cor || secao.cor,
-        inicioCm,
-        fimCm,
-        alturaCm: round1(Math.max(0, fimCm - inicioCm)),
-        partition,
-        flatConfig: {
-          tacosPorGomo: partition.tacosPorGomo,
-          alturaTacoCm: partition.alturaTacoCm,
-          bainhaCm: BAINHA_FINA_CM,
-        },
-      };
-    });
-  } else {
-    let yTop = secao.fimCm;
-    return parts.map((partition, index) => {
-      const isLast = index === n - 1;
-      const frac = weights[index] / weightSum;
-      const alturaRaw = isLast ? yTop - secao.inicioCm : secao.alturaCm * frac;
-      const alturaCm = round1(Math.max(0, isLast ? yTop - secao.inicioCm : alturaRaw));
-      const fimCm = round1(yTop);
-      const inicioCm = round1(isLast ? secao.inicioCm : yTop - alturaCm);
-      yTop = inicioCm;
-
-      const calculatedSubindo = Math.max(1, Math.floor(alturaCm / partition.alturaTacoCm));
-      const partitionWithSubindo = { ...partition, tacosSubindo: calculatedSubindo };
-
-      return {
-        ...secao,
-        nome: n > 1 ? `${secao.nome} ${index + 1}` : secao.nome,
-        cor: partition.cor || secao.cor,
-        inicioCm,
-        fimCm,
-        alturaCm: round1(Math.max(0, fimCm - inicioCm)),
-        partition: partitionWithSubindo,
-        flatConfig: {
-          tacosPorGomo: partition.tacosPorGomo,
-          alturaTacoCm: partition.alturaTacoCm,
-          bainhaCm: BAINHA_FINA_CM,
-        },
-      };
-    });
+  // 2. Se a altura preenchida for menor que a altura total da seção, cria uma repartição virtual em branco no topo
+  if (totalPartsHeight < secao.alturaCm - 0.05) {
+    const blankPartition: SectionPartition = {
+      id: `blank-${secao.id}-${Date.now()}`,
+      tacosPorGomo: 0,
+      alturaTacoCm: 0,
+      tacosSubindo: 0,
+      peso: 0,
+      cor: '#ffffff',
+      corDivisao: '#0f2740',
+      isBlank: true,
+    } as any;
+    parts = [blankPartition, ...parts];
   }
+
+  const n = parts.length;
+  let yTop = secao.fimCm;
+
+  return parts.map((partition, index) => {
+    const isLast = index === n - 1; // Fisicamente na base (última parte do loop)
+    const isBlank = (partition as any).isBlank === true;
+    
+    // Altura da repartição
+    const tacosSubindo = partition.tacosSubindo ?? 10;
+    const alturaCm = isBlank
+      ? secao.alturaCm - totalPartsHeight
+      : round1(tacosSubindo * partition.alturaTacoCm);
+
+    const fimCm = round1(yTop);
+    let inicioCm: number;
+    
+    if (isLast) {
+      inicioCm = secao.inicioCm;
+    } else {
+      inicioCm = round1(Math.max(secao.inicioCm, yTop - alturaCm));
+    }
+    yTop = inicioCm;
+
+    return {
+      ...secao,
+      nome: n > 1 && !isBlank ? `${secao.nome} ${n - index}` : secao.nome,
+      cor: partition.cor || secao.cor,
+      inicioCm,
+      fimCm,
+      alturaCm: round1(Math.max(0, fimCm - inicioCm)),
+      partition,
+      flatConfig: {
+        tacosPorGomo: partition.tacosPorGomo,
+        alturaTacoCm: partition.alturaTacoCm,
+        bainhaCm: BAINHA_FINA_CM,
+        isBlank,
+      } as any,
+    };
+  });
 }
 
 /**
@@ -659,39 +664,29 @@ export interface TacoDivisionLines {
 export function buildTacoDivisions(
   secao: MoldSection,
   config: FlatTacoConfig | SectionPartition,
-  profile: ProfilePoint[]
+  profile: ProfilePoint[],
+  bainhaMoldCm: number = 1.0
 ): TacoDivisionLines {
+  const isBlank = (config as any).isBlank === true;
+  if (isBlank) {
+    return {
+      verticals: [],
+      horizontals: [],
+      verticalHems: [],
+      horizontalHems: [],
+      quantidadeVertical: 0,
+      totalTacos: 0,
+    };
+  }
+
   const tacosPorGomo = Math.max(1, Math.min(64, Math.floor(Number(config.tacosPorGomo)) || 1));
   // Altura do taco so em cm inteiros; evita taco=1cm em secoes enormes (freeze)
   let alturaTaco = Math.max(1, Math.floor(Number(config.alturaTacoCm)) || 1);
   const altura = Math.max(0, Number(secao.alturaCm) || 0);
-
-  // Padrao do molde de referencia
   const bainhaFina = BAINHA_FINA_CM;
   const bainhaGrossa = BAINHA_GROSSA_CM;
+  const minHalfForGrid = 0.1;
 
-  // A grade sobe ate onde a largura real ainda aguenta os tacos sem embolar
-  // (minHalfForGrid abaixo). Nao ha mais corte fixo por cm — senao sobrava
-  // ponta sem grade mesmo quando a largura ali ainda comportava taco.
-  const moldTopCm = profile.length > 0 ? profile[profile.length - 1].yCm : secao.fimCm;
-  const yTipLimit = moldTopCm;
-
-  // Largura minima POR COLUNA de taco: as duas bainhas (0,5cm cada, uma de cada
-  // lado do corte) nao podem se cruzar, entao precisa de pelo menos 2x bainha
-  // + uma sobra pequena de tecido visivel entre elas. Isso ainda multiplica
-  // pela quantidade de tacos por gomo (mais coluna = precisa de mais largura
-  // total pra caber todo mundo sem embolar) — so o valor por coluna ficou
-  // bem menor que antes, entao a grade sobe bem mais perto da ponta.
-  const minCellCm = Math.max(1.3, bainhaFina * 2 + 0.3);
-  // Piso FIXO independente da quantidade de tacos: a bainha grossa da esquerda
-  // (1cm) e a bainha fina da direita (0,5cm) sao sempre as mesmas, entao com
-  // poucos tacos por gomo (ex.: 2) a conta por coluna sozinha dava um minimo
-  // menor que o espaco que essas duas bainhas de borda precisam pra nao se
-  // cruzar — e era isso que embolava a ponta com poucos tacos.
-  const edgeHemFloorCm = bainhaGrossa + bainhaFina + 0.3;
-  const minHalfForGrid = Math.max(edgeHemFloorCm, (tacosPorGomo * minCellCm) / 2);
-
-  // Passo de amostragem seguro (nunca 0/NaN — evita loop infinito e pontos demais)
   const sampleStep = Math.max(0.5, Number.isFinite(altura) && altura > 0 ? altura / 48 : 1);
   const verticals: Array<Array<{ xCm: number; yCm: number }>> = [];
   const verticalHems: HemPolyline[] = [];
@@ -700,84 +695,44 @@ export function buildTacoDivisions(
     return interpolateHalfWidth(y, profile);
   }
 
-  function resolveYMax(minHalf: number): number {
-    const hardMax = Math.min(secao.fimCm, yTipLimit);
-    let yMax = secao.inicioCm;
-    const step = Math.max(0.5, sampleStep);
-    // Teto de iteracoes — protege contra step invalido / altura absurda
-    const maxIters = 256;
-    let iters = 0;
-    for (let y = secao.inicioCm; y <= hardMax + 0.0001 && iters < maxIters; y += step, iters += 1) {
-      const yClamped = Math.min(y, hardMax);
-      if (halfAt(yClamped) >= minHalf) {
-        yMax = yClamped;
-      }
-    }
-    return halfAt(yMax) >= minHalf * 0.95 ? yMax : secao.inicioCm;
+  function wLimpoAt(y: number): number {
+    return halfAt(y);
   }
 
-  /**
-   * Espelho de resolveYMax pra quando a ponta livre fica EMBAIXO (ex.: a boca
-   * de um molde que afina pra base, tipo o "Stilus") — desce de fimCm (junta,
-   * de cima) ate onde a largura ainda aguenta, em vez de subir de inicioCm.
-   */
-  function resolveYMin(minHalf: number): number {
-    const hardMin = Math.max(secao.inicioCm, 0);
-    let yMin = secao.fimCm;
+  function sampleBoundary(
+    yStart: number,
+    yEnd: number,
+    sign: 1 | -1
+  ): Array<{ xCm: number; yCm: number }> {
+    const poly: Array<{ xCm: number; yCm: number }> = [];
+    const start = Math.max(secao.inicioCm, yStart);
+    const end = Math.min(secao.fimCm, yEnd);
     const step = Math.max(0.5, sampleStep);
-    const maxIters = 256;
-    let iters = 0;
-    for (let y = secao.fimCm; y >= hardMin - 0.0001 && iters < maxIters; y -= step, iters += 1) {
-      const yClamped = Math.max(y, hardMin);
-      if (halfAt(yClamped) >= minHalf) {
-        yMin = yClamped;
-      }
+    
+    for (let y = start; y <= end + 0.0001; y += step) {
+      const yClamped = Math.min(y, end);
+      const half = wLimpoAt(yClamped);
+      poly.push({ xCm: sign * half, yCm: yClamped });
     }
-    return halfAt(yMin) >= minHalf * 0.95 ? yMin : secao.fimCm;
+    return poly;
   }
 
-  /**
-   * Bainha de junta 1 cm (parte de baixo): NAO diminui o tamanho do molde.
-   * - Silhueta / altura da secao: intactas
-   * - Contagem de tacos: usa a altura util INTEIRA (sem descontar 1 cm)
-   * - So evita desenhar horizontal de taco em cima da linha da bainha (limpo na junta)
-   * Taco de cima 5 cm fica sobre a bainha 1 cm no encontro (costura), sem encolher o gomo.
-   */
-  const hasJoinAtTop = secao.fimCm < moldTopCm - 0.2;
+  const isBico = secao.id === 'bico';
+  const isBoca = secao.id === 'boca';
+  const hasJoinAtTop = !isBico; 
   const joinZoneStart = hasJoinAtTop ? secao.fimCm - BAINHA_JUNTA_CM : secao.fimCm + 10;
-
-  /**
-   * A grade so pode "encolher" pelo lado que e ponta LIVRE do molde (nao
-   * encostado em outra secao) — o lado junto (encostado no vizinho) fica
-   * sempre inteiro. Antes disso assumia que a ponta livre era sempre em
-   * cima (certo pro bico) — quebrava a boca de moldes que tambem afinam
-   * pra base (ai a grade "subia" contando com uma largura que so existia
-   * perto do bojo, e a base ficava sem nenhuma linha, so cor solida).
-   */
-  const touchesMoldBase = secao.inicioCm <= 0.5;
-  const touchesMoldTip = secao.fimCm >= moldTopCm - 0.5;
 
   let yVertBottom = secao.inicioCm;
   let yVertTop = secao.fimCm;
 
-  if (touchesMoldTip && !touchesMoldBase) {
-    // tipo bico: junta embaixo (com o bojo), ponta livre em cima — sobe ate onde aguenta.
-    const rawYMax = resolveYMax(minHalfForGrid);
-    yVertTop = rawYMax > secao.inicioCm + 0.5 ? Math.min(rawYMax, secao.fimCm) : secao.inicioCm;
-  } else if (touchesMoldBase && !touchesMoldTip) {
-    // tipo boca: junta em cima (com o bojo), ponta livre embaixo — desce ate onde aguenta.
-    const rawYMin = resolveYMin(minHalfForGrid);
-    yVertBottom = rawYMin < secao.fimCm - 0.5 ? Math.max(rawYMin, secao.inicioCm) : secao.fimCm;
+  if (isBico) {
+    yVertTop = secao.fimCm;
+  } else if (isBoca) {
+    yVertBottom = secao.inicioCm;
   }
-  // bojo (ou qualquer banda que nao toque nenhuma ponta livre): junta dos 2
-  // lados, usa a faixa inteira — nunca precisa encolher.
 
-  // Fileiras na altura util completa — NAO desconta a bainha de 1 cm do tamanho
   let usableForRows = Math.max(0, yVertTop - yVertBottom);
   if (alturaTaco > 0 && usableForRows / alturaTaco > MAX_TACO_ROWS) {
-    // ceil (nao floor): senao a fileira ajustada podia continuar dando mais
-    // linhas que o teto e a grade parava no meio, deixando o resto da secao
-    // so com verticais (sem corte nenhum) ate o topo.
     alturaTaco = Math.max(1, Math.ceil(usableForRows / MAX_TACO_ROWS));
   }
   usableForRows = Math.max(0, yVertTop - yVertBottom);
@@ -788,12 +743,6 @@ export function buildTacoDivisions(
 
   const yGridBottom = yVertBottom;
   const gridTop = yVertTop;
-
-  /**
-   * Amostra em proporcao de yStart ate yEnd.
-   * - Cortes: fecham nos dois extremos (base e topo da grade).
-   * - Bainhas: param se o offset sair da silhueta.
-   */
   function sampleProportionalTo(
     yStart: number,
     yEnd: number,
@@ -814,7 +763,7 @@ export function buildTacoDivisions(
     let iters = 0;
 
     function pushPoint(y: number, forceInside: boolean): boolean {
-      const half = halfAt(y);
+      const half = wLimpoAt(y);
       if (half < minHalf * 0.9 && !forceInside) {
         return false;
       }
@@ -850,45 +799,46 @@ export function buildTacoDivisions(
         continue;
       }
 
-      const half = halfAt(yClamped);
-      if (half < minHalf * 0.9) {
-        if (poly.length >= 2 && !isCut) break;
-        if (!isCut) continue;
+      const halfClamped = wLimpoAt(yClamped);
+      // Largura insuficiente: para a vertical (cortes e bainhas). Continuar
+      // forcando na zona estreita gerava X "espremido" e grade cruzada na ponta.
+      if (halfClamped < minHalf * 0.9) {
+        if (poly.length >= 2) break;
+        continue;
       }
 
-      const x = xAtHalf(half);
-      const xMin = -half + edgeMargin;
-      const xMax = half - edgeMargin;
+      const x = xAtHalf(halfClamped);
+      const xMin = -halfClamped + edgeMargin;
+      const xMax = halfClamped + edgeMargin;
 
       if (x < xMin || x > xMax) {
-        if (!isCut) {
-          if (poly.length >= 2) break;
-          continue;
-        }
-        poly.push({
-          xCm: Math.max(xMin, Math.min(xMax, x)),
-          yCm: yClamped,
-        });
+        if (poly.length >= 2) break;
         continue;
       }
 
       poly.push({ xCm: x, yCm: yClamped });
     }
 
-    // Ponto final no topo da grade (fecho / divisao com a parte de cima)
-    // Cortes sempre fecham; bainhas tambem fecham se a largura ainda comporta o offset
-    // (senao fica o ultimo ponto valido — ponta estreita).
+    // Ponto final no topo da grade. NUNCA forcar ponto com half < minHalf
+    // (era isso que embolava as verticais perto da ponta do bico).
     if (isCut) {
-      pushPoint(end, true);
+      const halfEnd = wLimpoAt(end);
+      if (halfEnd >= minHalf * 0.9) {
+        pushPoint(end, true);
+      } else if (poly.length >= 1) {
+        // fecha no ultimo y valido ja amostrado (nao inventa x na zona estreita)
+        const last = poly[poly.length - 1];
+        if (Math.abs(last.yCm - end) > 0.2) {
+          // nada — deixa a vertical terminar onde a largura ainda aguenta
+        }
+      }
     } else {
-      const halfEnd = halfAt(end);
+      const halfEnd = wLimpoAt(end);
       const xEnd = xAtHalf(halfEnd);
       const xMin = -halfEnd + edgeMargin;
       const xMax = halfEnd - edgeMargin;
       if (halfEnd >= minHalf * 0.85 && xEnd >= xMin && xEnd <= xMax) {
         pushPoint(end, true);
-      } else {
-        pushPoint(end, false);
       }
     }
 
@@ -933,27 +883,13 @@ export function buildTacoDivisions(
       }
     }
 
-    const right = sampleProportionalTo(
-      yGridBottom,
-      gridTop,
-      (half) => half - bainhaFina,
-      minHalfForGrid,
-      false
-    );
-    if (right.length >= 2) {
-      verticalHems.push({ points: right, espessuraCm: bainhaFina });
-    }
-    const left = sampleProportionalTo(
-      yGridBottom,
-      gridTop,
-      (half) => -half + bainhaGrossa,
-      minHalfForGrid,
-      false
-    );
+    const left = sampleBoundary(yGridBottom, gridTop, -1);
     if (left.length >= 2) {
       verticalHems.push({ points: left, espessuraCm: bainhaGrossa });
     }
   }
+
+  void bainhaMoldCm;
 
   const horizontals: Array<{ yCm: number; halfCm: number }> = [];
   const horizontalHems: HemHorizontal[] = [];
@@ -969,7 +905,7 @@ export function buildTacoDivisions(
     if (hasJoinAtTop && yCm >= joinZoneStart - 0.02) {
       continue;
     }
-    const half = halfAt(yCm);
+    const half = wLimpoAt(yCm);
     if (half < 0.8) {
       continue;
     }
@@ -980,13 +916,13 @@ export function buildTacoDivisions(
     if (
       yHem > yGridBottom + 0.05 &&
       !(hasJoinAtTop && yHem >= joinZoneStart - 0.05) &&
-      halfAt(yHem) >= 0.8
+      wLimpoAt(yHem) >= 0.8
     ) {
       const prevY = yGridBottom + (i - 1) * alturaTaco;
       if (yHem > prevY + 0.15) {
         horizontalHems.push({
           yCm: yHem,
-          halfCm: halfAt(yHem),
+          halfCm: wLimpoAt(yHem),
           espessuraCm: bainhaFina,
         });
       }
@@ -1013,6 +949,7 @@ export interface SeparatedPiece {
   tacosPorGomo: number;
   alturaTacoCm: number;
   totalTacos: number;
+  tacosSubindo: number;
   /** Perfil so dessa peca, com y comecando em 0 na base — pronta pra desenhar sozinha. */
   profile: MoldProfile;
   tacoConfigs: SectionTacoConfigMap;
@@ -1030,7 +967,8 @@ export function buildSeparatedPieces(
   pontos: MoldPoint[],
   tacoConfigs: SectionTacoConfigMap,
   sectionRatios: SectionRatios,
-  sectionColors?: Partial<Record<MoldSection['id'], string>>
+  sectionColors?: Partial<Record<MoldSection['id'], string>>,
+  bainhaCm: number = 1.0
 ): SeparatedPiece[] {
   const profile = buildMoldProfile(pontos, sectionRatios, tacoConfigs);
   if (!profile) {
@@ -1055,7 +993,31 @@ export function buildSeparatedPieces(
         continue;
       }
 
-      const slice = sliceProfile(profile.points, band.inicioCm, band.fimCm);
+      let slice = sliceProfile(profile.points, band.inicioCm, band.fimCm);
+
+      // Peca no topo absoluto do molde (Bico): contorno SEMPRE fecha em ponta
+      // (halfWidth = 0), mesmo que a grade de tacos pare antes por largura.
+      const isMoldTip =
+        sectionId === 'bico' && Math.abs(band.fimCm - profile.alturaTotalCm) < 0.15;
+      if (isMoldTip && slice.length > 0) {
+        const tipY = profile.alturaTotalCm;
+        // Remove pontos colados no topo e forca apex agudo
+        slice = slice.filter((p) => p.yCm < tipY - 0.08);
+        slice.push({ yCm: tipY, halfWidthCm: 0 });
+        // Garante pelo menos um ponto intermediario de taper se o penultimo
+        // ainda estiver muito largo (evita "ponta reta" de um salto so).
+        if (slice.length >= 2) {
+          const prev = slice[slice.length - 2];
+          if (prev.halfWidthCm > 1.2 && tipY - prev.yCm > 1.5) {
+            const midY = (prev.yCm + tipY) / 2;
+            slice.splice(slice.length - 1, 0, {
+              yCm: midY,
+              halfWidthCm: Math.max(0, prev.halfWidthCm * 0.45),
+            });
+          }
+        }
+      }
+
       const localPoints: ProfilePoint[] = slice.map((point) => ({
         yCm: round1(point.yCm - band.inicioCm),
         halfWidthCm: point.halfWidthCm,
@@ -1090,7 +1052,7 @@ export function buildSeparatedPieces(
       // secao precisa estar no MESMO referencial (local, 0..alturaTotalCm) que localPoints —
       // usar "band" (que ainda tem inicioCm/fimCm globais) aqui faria a interpolacao de
       // largura cair fora do dominio de localPoints e zerar a grade/contagem de tacos.
-      const divisions = buildTacoDivisions(singleSecao, band.flatConfig, localPoints);
+      const divisions = buildTacoDivisions(singleSecao, band.flatConfig, localPoints, bainhaCm);
 
       pieces.push({
         id: band.partition.id,
@@ -1102,6 +1064,7 @@ export function buildSeparatedPieces(
         tacosPorGomo: band.partition.tacosPorGomo,
         alturaTacoCm: band.partition.alturaTacoCm,
         totalTacos: divisions.totalTacos,
+        tacosSubindo: divisions.quantidadeVertical,
         profile: singleProfile,
         tacoConfigs: singleTacoConfigs,
       });
@@ -1115,7 +1078,8 @@ export function buildSeparatedPieces(
 export function computeSectionTacoTotals(
   pontos: MoldPoint[],
   tacoConfigs: SectionTacoConfigMap,
-  sectionRatios: SectionRatios
+  sectionRatios: SectionRatios,
+  bainhaCm: number = 1.0
 ): Record<MoldSection['id'], number> | null {
   const profile = buildMoldProfile(pontos, sectionRatios, tacoConfigs);
   if (!profile) {
@@ -1127,7 +1091,7 @@ export function computeSectionTacoTotals(
     const cfg = tacoConfigs[secao.id] ?? { partitions: [] };
     const bands = expandSectionPartitions(secao, cfg);
     totals[secao.id] = bands.reduce(
-      (sum, band) => sum + buildTacoDivisions(band, band.flatConfig, profile.points).totalTacos,
+      (sum, band) => sum + buildTacoDivisions(band, band.flatConfig, profile.points, bainhaCm).totalTacos,
       0
     );
   }

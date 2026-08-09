@@ -7,7 +7,7 @@ import {
   createDefaultTacoConfigs,
   DEFAULT_SECTION_RATIOS,
   expandSectionPartitions,
-  profileToClosedPath,
+  profileToClosedPathAsymmetric,
   sliceProfile,
   type MoldProfile,
   type MoldSection,
@@ -26,6 +26,7 @@ interface GomoTacoPreviewProps {
   sectionRatios?: SectionRatios;
   /** Sem barra de zoom/pan — so o SVG, escalando pelo container (uso em cards/miniaturas). */
   compact?: boolean;
+  bainhaCm?: number;
 }
 
 const ZOOM_MIN = 25;
@@ -175,10 +176,12 @@ export function GomoTacoPreview({
       scrollTop: el.scrollTop,
     };
     setIsPanning(true);
-    try {
-      el.setPointerCapture(event.pointerId);
-    } catch {
-      // ignore
+    if (event.pointerType === 'mouse') {
+      try {
+        el.setPointerCapture(event.pointerId);
+      } catch {
+        // ignore
+      }
     }
   }
 
@@ -292,6 +295,7 @@ export function GomoSvgTrueScale({
   showDetails,
   tacoConfigs,
   monochrome = false,
+  bainhaCm = 1.0,
 }: {
   profile: MoldProfile;
   className?: string;
@@ -299,29 +303,44 @@ export function GomoSvgTrueScale({
   tacoConfigs: SectionTacoConfigMap;
   /** Peca em branco (so contorno + grade + bainhas) — para impressao/corte, sem preenchimento colorido. */
   monochrome?: boolean;
+  bainhaCm?: number;
 }) {
   const { points, alturaTotalCm, larguraMaximaCm, secoes } = profile;
   const maxHalf = Math.max(larguraMaximaCm / 2, 0.1);
+  // Fonte proporcional a LARGURA do gomo, nao a altura — o gomo e sempre bem
+  // mais alto que largo (as vezes metros de altura por poucos cm de largura).
+  // Usar a altura aqui deixava a fonte/regua gigante em moldes compridos: a
+  // regua ficava varias vezes mais larga que o proprio molde, e nenhum zoom
+  // ajudava porque a proporcao entre os dois nunca mudava.
+  const fontSmall = Math.max(larguraMaximaCm * 0.1, 2.6);
 
-  const dimLeft = showDetails ? Math.max(alturaTotalCm * 0.04, 12) : Math.max(alturaTotalCm * 0.01, 3);
-  const dimRight = showDetails ? Math.max(alturaTotalCm * 0.05, 16) : Math.max(alturaTotalCm * 0.01, 3);
+  const dimLeft = Math.max(alturaTotalCm * 0.01, 3);
+  const dimRight = Math.max(alturaTotalCm * 0.01, 3);
   const padTop = Math.max(alturaTotalCm * 0.02, 6);
-  const padBottom = showDetails ? Math.max(alturaTotalCm * 0.035, 10) : Math.max(alturaTotalCm * 0.015, 4);
+  const padBottom = Math.max(alturaTotalCm * 0.015, 4);
   const padSide = Math.max(maxHalf * 0.35, 4);
+  /** Espaco pra regua lateral com o resumo de cada reparticao (tacos subindo,
+   * altura do taco, metragem da parte, tacos/gomo) — so quando showDetails. */
+  const rulerWidth = showDetails ? Math.max(larguraMaximaCm * 1.5, 40) : 0;
 
   const gomoLeft = dimLeft + padSide;
   const centerX = gomoLeft + maxHalf;
   const gomoRight = centerX + maxHalf;
-  const viewW = gomoRight + padSide + dimRight;
+  const viewW = gomoRight + padSide + dimRight + rulerWidth;
   const viewH = padTop + alturaTotalCm + padBottom;
 
   const mapX = (half: number, sign: 1 | -1) => centerX + sign * half;
+  const mapXAsymmetric = (wBanco: number, sign: 1 | -1) => {
+    if (sign === -1) {
+      return centerX - wBanco - 1.0;
+    } else {
+      return centerX + wBanco;
+    }
+  };
   const mapXAbs = (xCm: number) => centerX + xCm;
   const mapY = (yCm: number) => padTop + (alturaTotalCm - yCm);
-  const topY = mapY(alturaTotalCm);
-  const bottomY = mapY(0);
 
-  const fullPath = profileToClosedPath(points, mapX, mapY);
+  const fullPath = profileToClosedPathAsymmetric(points, mapXAsymmetric, mapY);
 
   // Remove horizontais/bainhas internas coladas nas bordas — a junta tem UMA bainha de 1 cm.
   const BOUNDARY_EPS = BAINHA_JUNTA_CM + 0.15;
@@ -330,7 +349,7 @@ export function GomoSvgTrueScale({
     const cfg = tacoConfigs[secao.id] ?? { partitions: [] };
     const bands = expandSectionPartitions(secao, cfg);
     return bands.map((band, bandIndexInParent) => {
-      const raw = buildTacoDivisions(band, band.flatConfig, points);
+      const raw = buildTacoDivisions(band, band.flatConfig, points, bainhaCm);
       const divisions = {
         ...raw,
         horizontals: raw.horizontals.filter(
@@ -350,7 +369,7 @@ export function GomoSvgTrueScale({
         parentId: secao.id as MoldSection['id'],
         bandIndexInParent,
         fillColor,
-        path: profileToClosedPath(sliceProfile(points, band.inicioCm, band.fimCm), mapX, mapY),
+        path: profileToClosedPathAsymmetric(sliceProfile(points, band.inicioCm, band.fimCm), mapXAsymmetric, mapY),
         midY: mapY((band.inicioCm + band.fimCm) / 2),
         lineY: mapY(band.fimCm),
         divisions,
@@ -411,8 +430,6 @@ export function GomoSvgTrueScale({
   const strokeDim = 1.1;
   const hemColor = '#1a1a1a';
   const cutColor = '#13283f';
-  const fontMain = Math.max(alturaTotalCm * 0.014, 3.2);
-  const fontSmall = Math.max(alturaTotalCm * 0.011, 2.6);
   const clipId = `gomo-real-${Math.round(alturaTotalCm * 10)}-${Math.round(larguraMaximaCm * 10)}`;
   const nonScale = { vectorEffect: 'non-scaling-stroke' as const };
 
@@ -540,98 +557,43 @@ export function GomoSvgTrueScale({
         </g>
       ))}
 
+      {/* Regua lateral por reparticao: qt tacos subindo, altura do taco,
+          metragem da parte e tacos/gomo — mesma info que vai pro PDF. */}
       {showDetails
-        ? sectionPaths.map(({ secao, midY, config, divisions }, index) => (
-            <g key={`label-${secao.nome}-${index}`}>
-              <text
-                x={centerX}
-                y={midY - fontMain * 0.55}
-                textAnchor="middle"
-                fontSize={fontMain}
-                fontWeight={800}
-                fill="#13283f"
-              >
-                {secao.nome.toUpperCase()}
-              </text>
-              <text
-                x={centerX}
-                y={midY + fontSmall * 0.35}
-                textAnchor="middle"
-                fontSize={fontSmall}
-                fontWeight={700}
-                fill="#243b53"
-              >
-                {config.tacosPorGomo} tacos/gomo · taco {Math.floor(config.alturaTacoCm)} cm
-              </text>
-              <text
-                x={centerX}
-                y={midY + fontSmall * 1.55}
-                textAnchor="middle"
-                fontSize={fontSmall * 0.95}
-                fontWeight={600}
-                fill="#334155"
-              >
-                {formatCm(secao.alturaCm)} · total {divisions.totalTacos} tacos
-              </text>
-            </g>
-          ))
+        ? sectionPaths
+            .filter(({ divisions }) => divisions.totalTacos > 0)
+            .map(({ secao, config, divisions }, index) => {
+              const rulerX = gomoRight + padSide * 0.5;
+              const tickLen = Math.max(larguraMaximaCm * 0.08, 2);
+              const textX = rulerX + tickLen + Math.max(larguraMaximaCm * 0.06, 1.5);
+              const yTop = mapY(secao.fimCm);
+              const yBottom = mapY(secao.inicioCm);
+              const yMid = (yTop + yBottom) / 2;
+              const lineGap = fontSmall * 1.25;
+              const linesStartY = yMid - lineGap * 1.0;
+
+              return (
+                <g key={`ruler-band-${secao.nome}-${index}`}>
+                  <line x1={rulerX} x2={rulerX} y1={yTop} y2={yBottom} stroke="#1e293b" strokeWidth={strokeDim} {...nonScale} />
+                  <line x1={rulerX - tickLen} x2={rulerX} y1={yTop} y2={yTop} stroke="#1e293b" strokeWidth={strokeDim} {...nonScale} />
+                  <line x1={rulerX - tickLen} x2={rulerX} y1={yBottom} y2={yBottom} stroke="#1e293b" strokeWidth={strokeDim} {...nonScale} />
+                  <text x={textX} y={linesStartY} fontSize={fontSmall} fontWeight={700} fill="#1e293b">
+                    {divisions.quantidadeVertical} tacos subindo
+                  </text>
+                  <text x={textX} y={linesStartY + lineGap} fontSize={fontSmall} fill="#1e293b">
+                    Taco: {formatCm(config.alturaTacoCm)} altura
+                  </text>
+                  <text x={textX} y={linesStartY + lineGap * 2} fontSize={fontSmall} fill="#1e293b">
+                    {formatCm(secao.alturaCm)} nesta parte
+                  </text>
+                  <text x={textX} y={linesStartY + lineGap * 3} fontSize={fontSmall} fill="#1e293b">
+                    {config.tacosPorGomo} tacos/gomo
+                  </text>
+                </g>
+              );
+            })
         : null}
 
-      {showDetails ? (
-        <>
-          <g>
-            <line
-              x1={dimLeft * 0.45}
-              x2={dimLeft * 0.45}
-              y1={topY}
-              y2={bottomY}
-              stroke="#3d7a4d"
-              strokeWidth={strokeDim}
-              {...nonScale}
-            />
-            <line
-              x1={dimLeft * 0.3}
-              x2={dimLeft * 0.6}
-              y1={topY}
-              y2={topY}
-              stroke="#3d7a4d"
-              strokeWidth={strokeDim}
-              {...nonScale}
-            />
-            <line
-              x1={dimLeft * 0.3}
-              x2={dimLeft * 0.6}
-              y1={bottomY}
-              y2={bottomY}
-              stroke="#3d7a4d"
-              strokeWidth={strokeDim}
-              {...nonScale}
-            />
-            <text
-              x={dimLeft * 0.22}
-              y={(topY + bottomY) / 2}
-              textAnchor="middle"
-              fontSize={fontSmall}
-              fontWeight={700}
-              fill="#3d7a4d"
-              transform={`rotate(-90 ${dimLeft * 0.22} ${(topY + bottomY) / 2})`}
-            >
-              {formatCm(alturaTotalCm)}
-            </text>
-          </g>
-
-          <text
-            x={centerX}
-            y={viewH - padBottom * 0.25}
-            textAnchor="middle"
-            fontSize={fontSmall}
-            fontWeight={600}
-            fill="#3d7a4d"
-          >
-            Largura max. do gomo: {formatCm(larguraMaximaCm)}
-          </text>
-        </>
-      ) : null}
     </svg>
   );
 }

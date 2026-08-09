@@ -164,7 +164,7 @@ export function ProjectGallery({ onModify, showModify = true }: ProjectGalleryPr
                       type="button"
                       className="mold-card-btn plot"
                       onClick={() => onModify(project)}
-                      title="Editar tacos, cores e proporcoes no Plotter"
+                      title="Editar tacos, cores e proporcoes no Plotar"
                     >
                       <Printer size={15} />
                       Modificar
@@ -293,6 +293,7 @@ export function ProjectGallery({ onModify, showModify = true }: ProjectGalleryPr
           nome={piecesProject.display_nome}
           pontos={piecesProject.pontos}
           plotterConfig={piecesProject.plotter_config}
+          bainhaCm={piecesProject.bainha_cm}
           onClose={() => setPiecesProject(null)}
         />
       ) : null}

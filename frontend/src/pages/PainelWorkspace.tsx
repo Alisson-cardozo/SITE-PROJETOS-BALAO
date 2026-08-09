@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Circle, Download, Droplet, Hand, ImagePlus, Loader2, Maximize2, Palette, Pencil, Send, Square, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
-import { buildColorSummary, CM_POR_PIXEL, replaceColorInGrid, snapNearBlackToBlack, type BandeiraColorSummaryEntry } from '../lib/bandeiraImage';
+import { Circle, Download, Droplet, FileImage, FolderOpen, Grid3x3, Hand, Hash, ImagePlus, Layers, Loader2, Maximize2, Palette, Pencil, Send, Square, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { buildColorSummary, CM_POR_PIXEL, readBandeiraNativePixelGrid, replaceColorInGrid, snapNearBlackToBlack, type BandeiraColorSummaryEntry } from '../lib/bandeiraImage';
 import { reduceBandeiraPalette } from '../lib/bandeiraImage';
 import { findClosestCatalogColor } from '../lib/bandeiraColors';
 import { hexToRgb } from '../lib/colorMath';
@@ -14,8 +14,9 @@ import {
   type MalhaSize,
 } from '../lib/painelImage';
 import { buildPainelPdf, type PainelDisplayMode, type PainelDivisionMode } from '../lib/painelPdf';
-import { downloadBlob, slugifyFilename } from '../lib/pdfExport';
+import { downloadBlob, downloadCanvasAsPng, slugifyFilename } from '../lib/pdfExport';
 import { SendPainelEmailModal } from '../components/SendPainelEmailModal';
+import { ImageCropModal } from '../components/ImageCropModal';
 import { numericFieldProps } from '../lib/numericInput';
 
 /** Preto e tratado como "modulo apagado/fundo" — nunca entra na numeracao ou
@@ -42,7 +43,7 @@ const DEFAULT_DIVISION_GRID_COLOR = '#2563eb';
 const MAX_UNDO_STEPS = 3;
 
 type Tool = 'mover' | 'lapis' | 'contagotas';
-type SidebarTab = 'cores' | 'numerar' | 'grades' | 'contagem' | 'exportar';
+type SidebarTab = 'tamanho' | 'cores' | 'numerar' | 'grades' | 'contagem' | 'exportar';
 
 function formatCm(value: number): string {
   const n = Number(value);
@@ -57,19 +58,31 @@ function computeCellBasePx(gridWidth: number, gridHeight: number): number {
 }
 
 export function PainelWorkspace() {
+  const draftData = (() => {
+    try {
+      const saved = window.localStorage.getItem('sistema-novo:draft:painel');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  })();
+
   const [file, setFile] = useState<File | null>(null);
+  /** Arquivo recem-escolhido, aguardando o recorte (ver ImageCropModal) antes
+   * de virar `file` de verdade e liberar o painel "Criar projeto". */
+  const [pendingCropFile, setPendingCropFile] = useState<File | null>(null);
   const [showCreatePanel, setShowCreatePanel] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [gridWidth, setGridWidth] = useState(0);
-  const [gridHeight, setGridHeight] = useState(0);
-  const [colors, setColors] = useState<string[] | null>(null);
+  const [gridWidth, setGridWidth] = useState(() => draftData?.gridWidth ?? 0);
+  const [gridHeight, setGridHeight] = useState(() => draftData?.gridHeight ?? 0);
+  const [colors, setColors] = useState<string[] | null>(() => draftData?.colors ?? null);
   /** false = ainda vetorizando (alta resolucao, malha nao escolhida) — true =
    * ja taqueado pra grade final de malha. */
-  const [taqueado, setTaqueado] = useState(false);
+  const [taqueado, setTaqueado] = useState(() => draftData?.taqueado ?? false);
 
-  const [targetColorCount, setTargetColorCount] = useState(16);
+  const [targetColorCount, setTargetColorCount] = useState(() => draftData?.targetColorCount ?? 16);
   const [reducing, setReducing] = useState(false);
 
   const [selectedColor, setSelectedColor] = useState<string | null>(null);
@@ -89,9 +102,9 @@ export function PainelWorkspace() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('cores');
   const [showNumbers, setShowNumbers] = useState(false);
 
-  const [malhaCm, setMalhaCm] = useState<MalhaSize>(DEFAULT_MALHA_CM);
-  const [larguraCm, setLarguraCm] = useState('');
-  const [alturaCm, setAlturaCm] = useState('');
+  const [malhaCm, setMalhaCm] = useState<MalhaSize>(() => draftData?.malhaCm ?? DEFAULT_MALHA_CM);
+  const [larguraCm, setLarguraCm] = useState(() => draftData?.larguraCm ?? '');
+  const [alturaCm, setAlturaCm] = useState(() => draftData?.alturaCm ?? '');
 
   const [divisionMode, setDivisionMode] = useState<PainelDivisionMode>('inteira');
   /** Independentes do toggle de preview da aba Grades — o PDF e um guia de
@@ -103,7 +116,7 @@ export function PainelWorkspace() {
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [showEmailModal, setShowEmailModal] = useState(false);
 
-  const [nome, setNome] = useState('');
+  const [nome, setNome] = useState(() => draftData?.nome ?? '');
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -133,10 +146,8 @@ export function PainelWorkspace() {
     return `rgba(${r}, ${g}, ${b}, 0.35)`;
   }, [fineGridColor]);
 
-  useEffect(() => {
-    workingColorsRef.current = colors ? colors.slice() : null;
-  }, [colors]);
-
+  /** Calcula um zoom que faz a grade inteira caber na area visivel do palco,
+   * pra nao comecar com uma imagem minuscula perdida num fundo preto gigante. */
   const fitZoomToStage = useCallback((widthPx: number, heightPx: number) => {
     const stage = stageRef.current;
     const availableWidth = (stage?.clientWidth ?? 800) - 32;
@@ -148,6 +159,36 @@ export function PainelWorkspace() {
     const snapped = fit >= 5 ? Math.floor(fit / 5) * 5 : fit;
     setZoom(Math.max(ZOOM_MIN, Math.round(snapped * 100) / 100));
   }, []);
+
+  useEffect(() => {
+    workingColorsRef.current = colors ? colors.slice() : null;
+  }, [colors]);
+
+  // Hook de Auto-salvamento silencioso para Painel e Letreiros
+  useEffect(() => {
+    if (!colors || gridWidth === 0 || gridHeight === 0) return;
+    try {
+      const draft = {
+        colors,
+        gridWidth,
+        gridHeight,
+        taqueado,
+        larguraCm,
+        alturaCm,
+        nome,
+        malhaCm,
+        targetColorCount
+      };
+      window.localStorage.setItem('sistema-novo:draft:painel', JSON.stringify(draft));
+    } catch {}
+  }, [colors, gridWidth, gridHeight, taqueado, larguraCm, alturaCm, nome, malhaCm, targetColorCount]);
+
+  // Hook de Restauracao de zoom inicial no carregamento de rascunho
+  useEffect(() => {
+    if (draftData?.gridWidth && draftData?.gridHeight) {
+      requestAnimationFrame(() => fitZoomToStage(draftData.gridWidth, draftData.gridHeight));
+    }
+  }, [fitZoomToStage]);
 
   const malhaGridSize = useMemo(
     () => computeMalhaGridSize(Number(larguraCm) || 0, Number(alturaCm) || 0, malhaCm),
@@ -189,12 +230,32 @@ export function PainelWorkspace() {
 
   const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const next = event.target.files?.[0] ?? null;
-    setFile(next);
     setError(null);
     setShowCreatePanel(false);
     setLarguraCm('');
     setAlturaCm('');
+    setFile(null);
+    // antes de liberar o "Criar projeto", abre o recorte — so vira `file` de
+    // verdade depois que o usuario confirma o recorte (ou escolhe usar a
+    // imagem inteira).
+    setPendingCropFile(next);
   }, []);
+
+  function handleCropConfirm(croppedFile: File) {
+    setFile(croppedFile);
+    setPendingCropFile(null);
+  }
+
+  function handleCropUseWhole() {
+    setFile(pendingCropFile);
+    setPendingCropFile(null);
+  }
+
+  function handleCropCancel() {
+    setPendingCropFile(null);
+    setFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
 
   /** Le a imagem numa resolucao de trabalho alta (nao e a grade final ainda)
    * — malha e tamanho real ja foram escolhidos no painel "Criar projeto", a
@@ -231,6 +292,49 @@ export function PainelWorkspace() {
     }
   }
 
+  /** Importa um projeto pronto (imagem ou JSON) diretamente sem passar por
+   * tamanho ou taqueamento de cores. Exibe direto as cores na tabela. */
+  async function handleImportReadyProject(importedFile: File) {
+    if (loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      if (importedFile.name.endsWith('.json')) {
+        const text = await importedFile.text();
+        const project = JSON.parse(text);
+        if (project.gridWidth && project.gridHeight && Array.isArray(project.colors)) {
+          setGridWidth(project.gridWidth);
+          setGridHeight(project.gridHeight);
+          setColors(snapNearBlackToBlack(project.colors));
+          if (project.nome) setNome(project.nome);
+          setTaqueado(true);
+          setShowCreatePanel(false);
+          historyRef.current = [];
+          setUndoCount(0);
+          requestAnimationFrame(() => fitZoomToStage(project.gridWidth, project.gridHeight));
+          return;
+        }
+      }
+
+      const grid = await readBandeiraNativePixelGrid(importedFile);
+      setGridWidth(grid.widthPx);
+      setGridHeight(grid.heightPx);
+      setColors(snapNearBlackToBlack(grid.colors));
+      setTaqueado(true);
+      setShowCreatePanel(false);
+      historyRef.current = [];
+      setUndoCount(0);
+      if (!nome) {
+        setNome(importedFile.name.replace(/\.[^.]+$/, ''));
+      }
+      requestAnimationFrame(() => fitZoomToStage(grid.widthPx, grid.heightPx));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Nao foi possivel importar o projeto pronto.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   /** "Taquear": pixeliza a arte vetorizada (ja editada) pra grade final de
    * malha — congela a vetorizada num snapshot antes, pra dar pra voltar. */
   function handleTaquear() {
@@ -250,22 +354,7 @@ export function PainelWorkspace() {
     requestAnimationFrame(() => fitZoomToStage(target.widthPx, target.heightPx));
   }
 
-  /** Volta pra etapa de vetorizacao (sem perder o trabalho de cor feito la),
-   * pra reajustar malha/tamanho sem taquear de novo do zero. */
-  function handleVoltarParaVetorizar() {
-    const snap = vetorSnapshotRef.current;
-    if (!snap) {
-      return;
-    }
-    setGridWidth(snap.width);
-    setGridHeight(snap.height);
-    setColors(snap.colors);
-    setTaqueado(false);
-    setSelectedColor(null);
-    historyRef.current = [];
-    setUndoCount(0);
-    requestAnimationFrame(() => fitZoomToStage(snap.width, snap.height));
-  }
+
 
   function handleReduceColors() {
     if (!colors || reducing) {
@@ -615,6 +704,13 @@ export function PainelWorkspace() {
     }, 30);
   }
 
+  function handleDownloadPng() {
+    const canvas = canvasRef.current;
+    if (!canvas || !colors) return;
+    const filename = `${slugifyFilename(nome || 'painel')}.png`;
+    downloadCanvasAsPng(canvas, filename);
+  }
+
   return (
     <div className="bandeira-workspace">
       <div className="bandeira-main-panel">
@@ -625,7 +721,27 @@ export function PainelWorkspace() {
 
         {!colors ? (
           <div className="bandeira-upload-card">
-            <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="bandeira-file-input" />
+            <div className="bandeira-import-options-row">
+              <label className="mold-save-button bandeira-upload-label">
+                <ImagePlus size={16} />
+                {file ? `Imagem: ${file.name}` : 'Escolher imagem para taquear'}
+                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="bandeira-file-input" />
+              </label>
+
+              <label className="mold-secondary-button bandeira-upload-label" title="Pula tamanho e quantidade de cores — abre direto a tabela de cores pra editar">
+                <FolderOpen size={16} />
+                Importar Projeto Pronto
+                <input
+                  type="file"
+                  accept="image/*,.json"
+                  onChange={(e) => {
+                    const selected = e.target.files?.[0];
+                    if (selected) void handleImportReadyProject(selected);
+                  }}
+                  className="bandeira-file-input"
+                />
+              </label>
+            </div>
 
             {error ? <p className="mold-import-error">{error}</p> : null}
 
@@ -709,7 +825,7 @@ export function PainelWorkspace() {
         ) : (
           <>
             <div className="bandeira-toolbar">
-              <div className="bandeira-toolbar-group">
+              <div className="bandeira-toolbar-group bandeira-tools-group">
                 <button type="button" className={tool === 'mover' ? 'active' : ''} onClick={() => setTool('mover')} title="Mover (arrastar pra navegar)">
                   <Hand size={15} />
                   Mover
@@ -789,7 +905,12 @@ export function PainelWorkspace() {
                 type="button"
                 className="mold-import-button"
                 onClick={() => {
+                  try {
+                    window.localStorage.removeItem('sistema-novo:draft:painel');
+                  } catch {}
                   setColors(null);
+                  setGridWidth(0);
+                  setGridHeight(0);
                   setFile(null);
                   setShowCreatePanel(false);
                   setTaqueado(false);
@@ -958,10 +1079,6 @@ export function PainelWorkspace() {
             </>
           ) : (
             <>
-              <button type="button" className="mold-import-button" onClick={handleVoltarParaVetorizar}>
-                <ArrowLeft size={15} />
-                Voltar pra vetorizacao (ajustar malha/tamanho)
-              </button>
 
               <div className="auth-tabs bandeira-sidebar-tabs" role="tablist">
                 <button type="button" className={sidebarTab === 'cores' ? 'active' : ''} onClick={() => setSidebarTab('cores')}>
@@ -1208,6 +1325,10 @@ export function PainelWorkspace() {
                     {downloadingPdf ? <Loader2 size={16} className="mold-import-spinner" /> : <Download size={16} />}
                     {downloadingPdf ? 'Gerando PDF...' : 'Baixar PDF'}
                   </button>
+                  <button type="button" className="mold-secondary-button" onClick={handleDownloadPng}>
+                    <FileImage size={16} />
+                    Baixar Imagem (PNG)
+                  </button>
                   <button type="button" className="mold-secondary-button" onClick={() => setShowEmailModal(true)}>
                     <Send size={16} />
                     Enviar por email
@@ -1219,6 +1340,105 @@ export function PainelWorkspace() {
         </div>
       ) : null}
 
+      {colors ? (
+        <nav className="bandeira-mobile-bottom-bar" aria-label="Navegação inferior móvel">
+          <button
+            type="button"
+            className={`mobile-bar-btn ${tool === 'mover' ? 'active' : ''}`}
+            onClick={() => setTool('mover')}
+            title="Ferramenta Mover"
+          >
+            <Hand size={17} />
+            <span>Mover</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-bar-btn ${tool === 'lapis' ? 'active' : ''}`}
+            onClick={() => setTool('lapis')}
+            title="Ferramenta Lápis"
+          >
+            <Pencil size={17} />
+            <span>Lápis</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-bar-btn ${sidebarTab === 'cores' ? 'active' : ''}`}
+            onClick={() => {
+              setSidebarTab('cores');
+              document.querySelector('.bandeira-side-panel')?.scrollIntoView({ behavior: 'smooth' });
+            }}
+            title="Aba de Cores"
+          >
+            <Palette size={17} />
+            <span>Cores</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-bar-btn ${sidebarTab === 'tamanho' ? 'active' : ''}`}
+            onClick={() => {
+              setSidebarTab('tamanho');
+              document.querySelector('.bandeira-side-panel')?.scrollIntoView({ behavior: 'smooth' });
+            }}
+            title="Aba Tamanho / Malha"
+          >
+            <Maximize2 size={17} />
+            <span>Tamanho</span>
+          </button>
+          {taqueado ? (
+            <>
+              <button
+                type="button"
+                className={`mobile-bar-btn ${sidebarTab === 'numerar' ? 'active' : ''}`}
+                onClick={() => {
+                  setSidebarTab('numerar');
+                  document.querySelector('.bandeira-side-panel')?.scrollIntoView({ behavior: 'smooth' });
+                }}
+                title="Aba Numerar"
+              >
+                <Hash size={17} />
+                <span>Numerar</span>
+              </button>
+              <button
+                type="button"
+                className={`mobile-bar-btn ${sidebarTab === 'grades' ? 'active' : ''}`}
+                onClick={() => {
+                  setSidebarTab('grades');
+                  document.querySelector('.bandeira-side-panel')?.scrollIntoView({ behavior: 'smooth' });
+                }}
+                title="Aba Grades"
+              >
+                <Grid3x3 size={17} />
+                <span>Grades</span>
+              </button>
+              <button
+                type="button"
+                className={`mobile-bar-btn ${sidebarTab === 'contagem' ? 'active' : ''}`}
+                onClick={() => {
+                  setSidebarTab('contagem');
+                  document.querySelector('.bandeira-side-panel')?.scrollIntoView({ behavior: 'smooth' });
+                }}
+                title="Aba Contagem"
+              >
+                <Layers size={17} />
+                <span>Contagem</span>
+              </button>
+              <button
+                type="button"
+                className={`mobile-bar-btn ${sidebarTab === 'exportar' ? 'active' : ''}`}
+                onClick={() => {
+                  setSidebarTab('exportar');
+                  document.querySelector('.bandeira-side-panel')?.scrollIntoView({ behavior: 'smooth' });
+                }}
+                title="Aba Exportar"
+              >
+                <Download size={17} />
+                <span>Exportar</span>
+              </button>
+            </>
+          ) : null}
+        </nav>
+      ) : null}
+
       {showEmailModal ? (
         <SendPainelEmailModal
           nome={nome.trim() || 'Painel'}
@@ -1227,6 +1447,15 @@ export function PainelWorkspace() {
           coresDistintas={countableColorSummary.length}
           buildPdfBlob={buildCurrentPdfBlob}
           onClose={() => setShowEmailModal(false)}
+        />
+      ) : null}
+
+      {pendingCropFile ? (
+        <ImageCropModal
+          file={pendingCropFile}
+          onConfirm={handleCropConfirm}
+          onUseWhole={handleCropUseWhole}
+          onCancel={handleCropCancel}
         />
       ) : null}
     </div>

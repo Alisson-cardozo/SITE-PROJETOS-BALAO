@@ -1,9 +1,14 @@
 import {
+  Antenna,
+  Bell,
   Box,
+  Cookie,
+  Drum,
   EyeOff,
   FilePlus2,
   Flag,
   FolderKanban,
+  Hammer,
   KeyRound,
   LayoutGrid,
   MonitorSmartphone,
@@ -12,9 +17,12 @@ import {
   Settings,
   Shapes,
   Share2,
+  ShoppingBasket,
   Ticket,
   Users,
   Wallet,
+  Wrench,
+  Mail,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -49,15 +57,15 @@ export const mainNavItems: NavItem[] = [
   },
   {
     id: 'plotter-tacos',
-    label: 'Plotter (Moldes Tacos)',
+    label: 'Plotar (Moldes Tacos)',
     icon: Printer,
     description: 'Geracao e envio de plotagem por tacos.',
   },
   {
     id: 'plotter-riscado',
-    label: 'Plotter (Molde Riscado)',
+    label: 'Plotar (Molde Riscado)',
     icon: PenTool,
-    description: 'Geracao e envio de plotagem no modo riscado.',
+    description: 'Lek no modo riscado.',
   },
   {
     id: 'bandeiras',
@@ -84,6 +92,44 @@ export const mainNavItems: NavItem[] = [
     description: 'Crie rifas com link publico pros seus clientes comprarem numeros.',
   },
   {
+    id: 'acabamentos',
+    label: 'Acabamentos',
+    icon: Wrench,
+    description: 'Ferramentas de acabamento: lanternagem, biscoito, cesto, pandeiro e antena.',
+    children: [
+      {
+        id: 'acabamento-lanternagem-bojo',
+        label: 'Lanternagem de Bojo',
+        icon: Hammer,
+        description: 'Acabamento de lanternagem do bojo do balao.',
+      },
+      {
+        id: 'acabamento-biscoito-golfier',
+        label: 'Biscoito de Golfier',
+        icon: Cookie,
+        description: 'Molde do biscoito de Golfier.',
+      },
+      {
+        id: 'acabamento-cesto',
+        label: 'Cesto',
+        icon: ShoppingBasket,
+        description: 'Molde e acabamento do cesto.',
+      },
+      {
+        id: 'acabamento-pandeiro',
+        label: 'Pandeiro',
+        icon: Drum,
+        description: 'Molde e acabamento do pandeiro.',
+      },
+      {
+        id: 'acabamento-desenho-antena',
+        label: 'Desenho de Antena',
+        icon: Antenna,
+        description: 'Desenho e medidas da antena.',
+      },
+    ],
+  },
+  {
     id: 'meus-projetos',
     label: 'Meus Projetos',
     icon: FolderKanban,
@@ -96,10 +142,10 @@ export const mainNavItems: NavItem[] = [
         description: 'Moldes ja plotados no modo tacos.',
       },
       {
-        id: 'projetos-moldes-riscados',
-        label: 'Moldes Riscados',
-        icon: PenTool,
-        description: 'Moldes ja plotados no modo riscado.',
+        id: 'projetos-lanternagem-bojo',
+        label: 'Lanternagem de Bojo',
+        icon: Hammer,
+        description: 'Projetos de lanternagem salvos como arquivo editavel (nao imagem).',
       },
     ],
   },
@@ -139,6 +185,18 @@ export const adminNavItems: NavItem[] = [
     icon: Wallet,
     description: 'Credenciais do Mercado Pago e os planos pagos (valor e dias de acesso).',
   },
+  {
+    id: 'admin-notificacoes',
+    label: 'Notificações',
+    icon: Bell,
+    description: 'Avisos de venda (push no celular) e histórico dos pagamentos confirmados.',
+  },
+  {
+    id: 'admin-comunicacao',
+    label: 'Comunicação',
+    icon: Mail,
+    description: 'Envie avisos aos clientes por e-mail e pop-up na tela.',
+  },
 ];
 
 /** So aparece pra quem nao tem plano pago ativo (ver hasPaidAccess em
@@ -152,28 +210,127 @@ export const solicitarAcessoNavItem: NavItem = {
   description: 'Escolha um plano e pague pra liberar o acesso ao sistema.',
 };
 
-/** Itens de nivel superior que podem ser escondidos dos usuarios comuns pelo
- * admin — mesma granularidade do menu (esconder um grupo esconde os filhos
- * dele junto). Nunca inclui os itens exclusivos do admin. */
-export const hideableNavItems: NavItem[] = [...mainNavItems, ...accountNavItems];
+/** Itens que podem ser escondidos dos usuarios comuns pelo admin — sempre a
+ * FOLHA final (ex.: "Galeria de Moldes" e "Adicionar sua Tabela de Molde"
+ * aparecem separados, nao o grupo "Moldes" inteiro), pra dar controle fino
+ * por tela. Se as duas folhas de um grupo ficarem escondidas, o grupo some
+ * sozinho do menu (ver filterHiddenNavItems). Nunca inclui os itens
+ * exclusivos do admin. */
+export const hideableNavItems: NavItem[] = flattenNavItems([...mainNavItems, ...accountNavItems]);
+
+/**
+ * Grupos de aba que um PLANO pode liberar — granularidade mais grossa que o
+ * menu (`mainNavItems`), porque o backend so consegue proteger por
+ * prefixo/controller de API: "Galeria de Moldes" e "Adicionar sua Tabela"
+ * dividem a mesma rota (/api/molds), assim como "Plotter Tacos" e "Meus
+ * Projetos > Moldes Taqueados" (/api/projects). Ver AbaAccessMiddleware e
+ * PlanoService::ALL_ABAS no backend — os ids aqui tem que bater exatamente.
+ */
+export interface PlanoAbaGroup {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  description: string;
+}
+
+export const PLANO_ABA_GROUPS: PlanoAbaGroup[] = [
+  {
+    id: 'moldes',
+    label: 'Moldes',
+    icon: Shapes,
+    description: 'Galeria de Moldes + Adicionar sua Tabela de Molde.',
+  },
+  {
+    id: 'plotter-tacos',
+    label: 'Plotar (Moldes Tacos)',
+    icon: Printer,
+    description: 'Plotar de tacos + Meus Projetos > Moldes Taqueados.',
+  },
+  {
+    id: 'plotter-riscado',
+    label: 'Plotar (Molde Riscado)',
+    icon: PenTool,
+    description: 'Lek no modo riscado.',
+  },
+  {
+    id: 'bandeiras',
+    label: 'Bandeiras (Tacos)',
+    icon: Flag,
+    description: 'Modulo de bandeiras pixeladas por taco.',
+  },
+  {
+    id: 'painel-letreiros',
+    label: 'Painel e Letreiros',
+    icon: MonitorSmartphone,
+    description: 'Criacao de paineis e letreiros luminosos.',
+  },
+  {
+    id: '3d-fotos',
+    label: '3D e Fotos',
+    icon: Box,
+    description: 'Modelos 3D e fotos do trabalho.',
+  },
+  {
+    id: 'profissionais',
+    label: 'Rifas',
+    icon: Ticket,
+    description: 'Criacao de rifas com link publico.',
+  },
+  {
+    id: 'acabamentos',
+    label: 'Acabamentos',
+    icon: Wrench,
+    description: 'Lanternagem de Bojo, Biscoito de Golfier, Cesto, Pandeiro e Desenho de Antena.',
+  },
+];
+
+/** De qual grupo (PLANO_ABA_GROUPS) cada item SELECIONAVEL do menu depende —
+ * usado pra saber se a aba atual esta bloqueada pelo plano do usuario (ver
+ * UserArea.tsx). Ids que nao aparecem aqui (configuracoes, solicitar-acesso)
+ * nunca ficam bloqueados por plano. */
+export const PLANO_ABA_GROUP_BY_NAV_ID: Record<string, string> = {
+  'moldes-galeria': 'moldes',
+  'moldes-tabela': 'moldes',
+  'plotter-tacos': 'plotter-tacos',
+  'projetos-moldes-taqueados': 'plotter-tacos',
+  'plotter-riscado': 'plotter-riscado',
+  bandeiras: 'bandeiras',
+  'painel-letreiros': 'painel-letreiros',
+  '3d-fotos': '3d-fotos',
+  profissionais: 'profissionais',
+  'acabamento-lanternagem-bojo': 'acabamentos',
+  'acabamento-biscoito-golfier': 'acabamentos',
+  'acabamento-cesto': 'acabamentos',
+  'acabamento-pandeiro': 'acabamentos',
+  'acabamento-desenho-antena': 'acabamentos',
+  'projetos-lanternagem-bojo': 'acabamentos',
+};
 
 export function flattenNavItems(items: NavItem[]): NavItem[] {
   return items.flatMap((item) => (item.children && item.children.length > 0 ? item.children : [item]));
 }
 
 /**
- * Um id conta como escondido se ele mesmo estiver na lista, OU se for filho
- * de um grupo escondido (esconder "Moldes" esconde "Galeria de Moldes" e
- * "Adicionar sua Tabela de Molde" junto). Usado tanto pra montar o menu
- * quanto pra tirar atalhos escondidos de outros lugares do sistema (ex: o
- * botao "Plotar Risco" na galeria, que pula direto pro Plotter Riscado sem
- * passar pelo menu).
+ * Esconder e sempre por folha (ver hideableNavItems) — usado tanto pra
+ * montar o menu quanto pra tirar atalhos escondidos de outros lugares do
+ * sistema (ex: o botao "Plotar Risco" na galeria, que pula direto pro
+ * Plotter Riscado sem passar pelo menu).
  */
-export function isNavItemHidden(id: string, hiddenTopLevelIds: ReadonlySet<string>): boolean {
-  if (hiddenTopLevelIds.has(id)) {
-    return true;
-  }
-  return hideableNavItems.some(
-    (item) => hiddenTopLevelIds.has(item.id) && (item.children ?? []).some((child) => child.id === id)
-  );
+export function isNavItemHidden(id: string, hiddenIds: ReadonlySet<string>): boolean {
+  return hiddenIds.has(id);
+}
+
+/**
+ * Filtra um array de grupos/itens de nav tirando as folhas escondidas — se
+ * TODAS as folhas de um grupo (ex.: "Moldes") ficarem escondidas, o grupo
+ * inteiro some do menu (nao faz sentido mostrar uma seta pra abrir um grupo
+ * vazio). Usado em UserArea pra montar visibleMainNavItems/visibleAccountNavItems.
+ */
+export function filterHiddenNavItems(items: NavItem[], hiddenIds: ReadonlySet<string>): NavItem[] {
+  return items
+    .filter((item) => !hiddenIds.has(item.id))
+    .map((item) =>
+      item.children ? { ...item, children: item.children.filter((child) => !hiddenIds.has(child.id)) } : item
+    )
+    .filter((item) => !item.children || item.children.length > 0);
 }

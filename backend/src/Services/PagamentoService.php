@@ -70,6 +70,70 @@ final class PagamentoService
         return $this->toPublicArray($this->findRawById($id) ?? []);
     }
 
+    /**
+     * Cobranca por cartao de credito. Reaproveita o mesmo caminho do Pix: cria a
+     * linha em `pagamentos` (pendente), cobra no Mercado Pago e delega a
+     * liberacao de acesso ao MESMO reconcileByLocalId/reconcileRow usado pelo
+     * polling e pelo webhook (idempotente). Cartao aprovado libera na hora;
+     * in_process continua pendente e o polling/webhook resolvem depois.
+     *
+     * @param array{id:int, nome:string, valor:float, dias_acesso:int} $plano
+     * @param array{token:string, payment_method_id:string, installments:int,
+     *   issuer_id:?int, device_id:?string, identification:?array{type:string, number:string}} $cartao
+     */
+    public function criarComCartao(
+        int $userId,
+        string $userEmail,
+        array $plano,
+        string $notificationUrl,
+        array $cartao
+    ): array {
+        $parcelas = max(1, (int) ($cartao['installments'] ?? 1));
+
+        $stmt = Db::connection()->prepare(
+            "INSERT INTO pagamentos (user_id, plano_id, valor, status, metodo, parcelas)
+             VALUES (:user_id, :plano_id, :valor, 'pendente', 'cartao', :parcelas)"
+        );
+        $stmt->execute([
+            'user_id' => $userId,
+            'plano_id' => $plano['id'],
+            'valor' => $plano['valor'],
+            'parcelas' => $parcelas,
+        ]);
+        $id = (int) Db::connection()->lastInsertId();
+
+        try {
+            $pagamento = $this->mercadoPago->createCardPayment(
+                $plano['valor'],
+                'Plano ' . $plano['nome'] . ' - Alisson Projetos',
+                (string) $id,
+                $userEmail,
+                $notificationUrl,
+                (string) $cartao['token'],
+                (string) $cartao['payment_method_id'],
+                $parcelas,
+                isset($cartao['issuer_id']) ? (int) $cartao['issuer_id'] : null,
+                $cartao['identification'] ?? null,
+                $cartao['device_id'] ?? null
+            );
+        } catch (Throwable $e) {
+            Db::connection()
+                ->prepare("UPDATE pagamentos SET status = 'rejeitado' WHERE id = :id")
+                ->execute(['id' => $id]);
+            throw $e;
+        }
+
+        Db::connection()
+            ->prepare('UPDATE pagamentos SET mp_payment_id = :mp_id WHERE id = :id')
+            ->execute(['id' => $id, 'mp_id' => $pagamento['id']]);
+
+        // reconcileByLocalId re-consulta o MP e aplica approved/rejected pelo
+        // mesmissimo reconcileRow (com grantAccess) usado pelo Pix e pelo webhook.
+        $reconciled = $this->reconcileByLocalId($id);
+
+        return $reconciled ?? $this->toPublicArray($this->findRawById($id) ?? []);
+    }
+
     public function findRawById(int $id): ?array
     {
         $stmt = Db::connection()->prepare('SELECT * FROM pagamentos WHERE id = :id LIMIT 1');
@@ -134,7 +198,28 @@ final class PagamentoService
             if ($stmt->rowCount() > 0) {
                 $plano = $this->planos->findRawById((int) $row['plano_id']);
                 if ($plano !== null) {
-                    $this->users->grantAccess((int) $row['user_id'], (int) $plano['dias_acesso']);
+                    $this->users->grantAccess((int) $row['user_id'], (int) $plano['dias_acesso'], (int) $plano['id']);
+
+                    // rowCount()>0 garante que esse caminho roda UMA vez por
+                    // pagamento (Pix, cartao ou webhook) -- notifica o admin da
+                    // venda. Best-effort: qualquer falha aqui nunca desfaz a
+                    // liberacao de acesso ja concluida acima.
+                    try {
+                        (new NotificacaoService())->criarPagamentoNotificacao(
+                            (int) $row['user_id'],
+                            [
+                                'id' => (int) $plano['id'],
+                                'nome' => (string) $plano['nome'],
+                                'valor' => (float) $row['valor'],
+                                'dias_acesso' => (int) $plano['dias_acesso'],
+                            ],
+                            (float) $row['valor'],
+                            (string) ($row['metodo'] ?? 'pix'),
+                            (int) $row['id']
+                        );
+                    } catch (Throwable $e) {
+                        // segue o baile
+                    }
                 }
             }
         } elseif (in_array($mpStatus['status'], ['rejected', 'cancelled'], true)) {
@@ -151,6 +236,8 @@ final class PagamentoService
             'plano_id' => (int) $row['plano_id'],
             'valor' => (float) $row['valor'],
             'status' => (string) $row['status'],
+            'metodo' => (string) ($row['metodo'] ?? 'pix'),
+            'parcelas' => (int) ($row['parcelas'] ?? 1),
             'qr_code' => $row['qr_code'] ?? null,
             'qr_code_base64' => $row['qr_code_base64'] ?? null,
             'created_at' => (string) $row['created_at'],

@@ -1,0 +1,46 @@
+# Produção — Alisson Projetos (sistema-novo)
+# Uso na VPS Hostinger (Docker Compose):
+#   1) copiar pasta sistema-novo pro servidor
+#   2) copiar deploy/.env.production -> .env  (ajustar domínio/DB)
+#   3) docker compose up -d --build
+#   4) docker compose exec api php database/migrate.php
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.php
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./backend/public/uploads:/var/www/backend/public/uploads
+      - ./backend/storage:/var/www/backend/storage
+      # PHP lê o .env do disco (Env::load)
+      - ./.env:/var/www/backend/.env:ro
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "php -r \"echo 'ok';\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  web:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./backend/public/uploads:/usr/share/nginx/html/uploads:ro
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5

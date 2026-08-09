@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Copy, Loader2, Trophy } from 'lucide-react';
+import { Check, Copy, Loader2, MessageCircle, Trophy } from 'lucide-react';
 import { NumeroGrid, type NumeroCellState } from '../components/NumeroGrid';
 import { api, ApiError } from '../lib/api';
 import { calcularValorTotal } from '../lib/rifaPricing';
@@ -245,6 +245,8 @@ export function RifaPublicPage({ slug }: { slug: string }) {
         `Ola! Reservei os numeros ${reserva.numeros.join(', ')} da rifa "${rifa.nome}", ja paguei via Pix e vou mandar o comprovante.`
       )
     : '';
+  const donoWhatsappDigits = (rifa.whatsapp_contato ?? '').replace(/\D/g, '');
+  const duvidaMessage = encodeURIComponent(`Ola! Tenho uma duvida sobre a rifa "${rifa.nome}".`);
 
   return (
     <div className="rifa-public-screen">
@@ -274,6 +276,18 @@ export function RifaPublicPage({ slug }: { slug: string }) {
             </strong>
           </div>
         </div>
+
+        {donoWhatsappDigits ? (
+          <a
+            className="mold-secondary-button rifa-public-whatsapp-dono"
+            href={`https://wa.me/${donoWhatsappDigits}?text=${duvidaMessage}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <MessageCircle size={16} />
+            Falar com o organizador no WhatsApp
+          </a>
+        ) : null}
 
         <div className="rifa-public-progress">
           <div className="rifa-public-progress-fill" style={{ width: `${rifa.percentual_vendido}%` }} />

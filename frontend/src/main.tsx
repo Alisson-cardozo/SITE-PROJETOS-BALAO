@@ -2,15 +2,34 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { AuthProvider } from './lib/auth';
+import { LojaPublicPage } from './pages/LojaPublicPage';
 import { RifaPublicPage } from './pages/RifaPublicPage';
 import './lib/pwaInstall';
 import './styles.css';
 
-// Unica rota publica do app (nao precisa de login) — o link que o dono da
-// rifa manda pro cliente. Checagem simples de pathname em vez de trazer uma
-// lib de rotas so pra isso; se um dia surgir mais de uma pagina publica, aí
-// sim vale a pena um router de verdade.
+// Proteções contra inspeção de código e engenharia reversa básica
+document.addEventListener('contextmenu', (e) => e.preventDefault());
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'F12') {
+    e.preventDefault();
+  }
+  if (e.ctrlKey && e.shiftKey && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) {
+    e.preventDefault();
+  }
+  if (e.ctrlKey && ['U', 'u', 'S', 's'].includes(e.key)) {
+    e.preventDefault();
+  }
+});
+// Limpa console constantemente
+setInterval(() => {
+  console.clear();
+}, 1000);
+
+// Rotas publicas do app (nao precisam de login): o link de uma rifa
+// especifica, e a vitrine da Loja (unica, sem slug). Checagem simples de
+// pathname em vez de trazer uma lib de rotas so pra isso.
 const rifaMatch = window.location.pathname.match(/^\/rifa\/([^/]+)\/?$/);
+const lojaMatch = window.location.pathname.match(/^\/loja\/?$/);
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -22,6 +41,8 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     {rifaMatch ? (
       <RifaPublicPage slug={decodeURIComponent(rifaMatch[1])} />
+    ) : lojaMatch ? (
+      <LojaPublicPage />
     ) : (
       <AuthProvider>
         <App />

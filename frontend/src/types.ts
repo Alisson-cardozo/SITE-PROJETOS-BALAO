@@ -8,7 +8,23 @@ export interface User {
   role: UserRole;
   status: UserStatus;
   access_expires_at?: string | null;
+  plano_id?: number | null;
+  plano_nome?: string | null;
+  plano_valor?: number | null;
+  /** Ids de aba que o plano atual libera. null = sem restricao (admin, ou
+   * plano que libera tudo) -- ver PlanoService::abasForPlanoId no backend. */
+  allowed_abas?: string[] | null;
   created_at?: string | null;
+  active_session_id?: string | null;
+  session_device?: string | null;
+  session_created_at?: string | null;
+  last_activity?: string | null;
+  is_online?: boolean;
+}
+
+export interface TutorialConfig {
+  show: boolean;
+  video_url: string;
 }
 
 export interface SystemSettings {
@@ -16,8 +32,12 @@ export interface SystemSettings {
   instagram: string | null;
   whatsapp: string | null;
   hidden_nav_items: string[];
+  /** Rotulo opcional por aba escondida (ex.: {"profissionais":"Em breve"}) —
+   * so faz sentido pra ids que tambem estao em hidden_nav_items. */
+  nav_item_labels: Record<string, string>;
   mercado_pago_public_key: string | null;
   mercado_pago_access_token_configured: boolean;
+  tutorials?: Record<string, TutorialConfig> | null;
 }
 
 export interface Plano {
@@ -26,10 +46,15 @@ export interface Plano {
   valor: number;
   dias_acesso: number;
   ativo: boolean;
+  /** Ids de aba (PLANO_ABA_GROUPS) que esse plano libera. Sempre uma lista
+   * concreta -- o backend ja resolve "sem abas_json" pra lista completa. */
+  abas: string[];
   created_by: { id: number; name: string };
   updated_by: { id: number; name: string };
   created_at: string;
   updated_at: string;
+  show_in_ranking?: boolean;
+  sales_override_count?: number;
 }
 
 export interface PlanoPublic {
@@ -37,19 +62,84 @@ export interface PlanoPublic {
   nome: string;
   valor: number;
   dias_acesso: number;
+  abas: string[];
+  show_in_ranking?: boolean;
+  sales_override_count?: number;
 }
 
 export interface PlanoPayload {
   nome: string;
   valor: number;
   dias_acesso: number;
+  abas: string[];
+  show_in_ranking: boolean;
+  sales_override_count: number;
 }
 
 export type PagamentoStatus = 'pendente' | 'aprovado' | 'rejeitado';
 
+export type PagamentoMetodo = 'pix' | 'cartao';
+
 export interface Pagamento {
   id: number;
   plano_id: number;
+  valor: number;
+  status: PagamentoStatus;
+  /** Como foi cobrado. Pix gera qr_code; cartao resolve na hora (sem QR). */
+  metodo?: PagamentoMetodo;
+  /** Numero de parcelas do cartao (Pix e sempre 1). */
+  parcelas?: number;
+  qr_code: string | null;
+  qr_code_base64: string | null;
+  created_at: string;
+  paid_at: string | null;
+}
+
+/** "disponivel" -> "reservado" (Pix pendente de 1 comprador) -> "vendido"
+ * (pago, nunca mais volta a ficar disponivel) -- ver LojaProdutoService. */
+export type LojaProdutoStatus = 'disponivel' | 'reservado' | 'vendido';
+
+/** Vitrine publica (/loja) -- nunca expoe link_arquivo nem quem reservou/comprou. */
+export interface LojaProdutoPublic {
+  id: number;
+  nome: string;
+  descricao: string;
+  valor: number;
+  imagens: string[];
+  status: LojaProdutoStatus;
+}
+
+/** Visao do admin (aba "Loja") -- inclui o link dos arquivos e quem comprou. */
+export interface LojaProdutoAdmin {
+  id: number;
+  nome: string;
+  descricao: string;
+  valor: number;
+  link_arquivo: string;
+  imagens: string[];
+  status: LojaProdutoStatus;
+  reservado_email: string | null;
+  reserva_expira_em: string | null;
+  comprador_email: string | null;
+  vendido_em: string | null;
+  created_by: string;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LojaProdutoPayload {
+  nome: string;
+  descricao: string;
+  valor: number;
+  link_arquivo: string;
+}
+
+/** Pix da Loja -- mesmo formato de Pagamento, so que o produto e um item
+ * unico (produto_id), nao um plano recorrente. */
+export interface LojaPagamento {
+  id: number;
+  produto_id: number;
   valor: number;
   status: PagamentoStatus;
   qr_code: string | null;
@@ -260,6 +350,129 @@ export interface MoldProjectSummary {
   can_delete: boolean;
 }
 
+/** Poligonos + linhas do molde (cm) + bounds do PNG — recorte/wrap/linhas na aba Criar. */
+export interface MoldMaskData {
+  export_min_x: number;
+  export_min_y: number;
+  export_w: number;
+  export_h: number;
+  content_min_x: number;
+  content_max_x: number;
+  content_min_y: number;
+  content_max_y: number;
+  paths: number[][][];
+  /** Costuras entre gomos [[x,y],[x,y]] */
+  seams?: number[][][];
+  /** Estacoes horizontais do perfil */
+  stations?: number[][][];
+  /** Linhas de guia/grade */
+  guides?: number[][][];
+  /** Contorno da boca */
+  mouth_edges?: number[][][];
+  equator_y?: number | null;
+  /** Silhueta continua precomputada */
+  silhouette?: { left: number[][]; right: number[][] };
+}
+
+/** Cores das linhas desenhadas por cima da arte. */
+export interface MoldLineColors {
+  gomo: string;
+  guide: string;
+  equator: string;
+  mouth: string;
+  outline: string;
+}
+
+/** Estado serializado do Lek + canvas da aba Criar. */
+export interface RiscadoProjectState {
+  lek?: Record<string, unknown>;
+  canvas?: {
+    objects?: unknown[];
+    bgColor?: string;
+    showGrid?: boolean;
+    line_colors?: MoldLineColors;
+    show_mold_lines?: boolean;
+  };
+  snapshot_svg?: string;
+  mold_image_png?: string;
+  mold_image_filename?: string;
+  mold_mask?: MoldMaskData | null;
+  [key: string]: unknown;
+}
+
+/** Projeto do Plotter Riscado (Meus Projetos > Moldes Riscados). */
+export interface RiscadoProject {
+  id: number;
+  nome: string;
+  modelo_key: string;
+  modelo_nome: string;
+  altura_cm: number;
+  quantidade_gomos: number;
+  bainha_cm: number;
+  state: RiscadoProjectState;
+  created_by: MoldUserRef;
+  updated_by: MoldUserRef;
+  created_at: string;
+  updated_at: string;
+  can_edit: boolean;
+  can_delete: boolean;
+}
+
+export interface RiscadoProjectPayload {
+  nome: string;
+  modelo_key: string;
+  modelo_nome: string;
+  altura_cm: number;
+  quantidade_gomos: number;
+  bainha_cm: number;
+  state: RiscadoProjectState;
+}
+
+/** Estado serializado da grade de Lanternagem de Bojo — nao e imagem, e o
+ * arquivo editavel que reabre na mesma tela pra continuar o desenho. */
+export interface LanternaProjectState {
+  colors: string[];
+  gridWidth: number;
+  gridHeight: number;
+  gridGomos: number;
+  gridLanternasPorGomo: number;
+  gridLanternasSubindo: number;
+  bolinha?: boolean;
+  showFineGrid?: boolean;
+  fineGridColor?: string;
+  showGomoLines?: boolean;
+  gomoLineColor?: string;
+  showDivisaoLines?: boolean;
+  divisaoCount?: number;
+  divisaoLineColor?: string;
+  showNumbers?: boolean;
+  [key: string]: unknown;
+}
+
+/** Projeto de Lanternagem de Bojo (Meus Projetos > Lanternagem de Bojo). */
+export interface LanternaProject {
+  id: number;
+  nome: string;
+  gomos: number;
+  lanternas_por_gomo: number;
+  lanternas_subindo: number;
+  state: LanternaProjectState;
+  created_by: MoldUserRef;
+  updated_by: MoldUserRef;
+  created_at: string;
+  updated_at: string;
+  can_edit: boolean;
+  can_delete: boolean;
+}
+
+export interface LanternaProjectPayload {
+  nome: string;
+  gomos: number;
+  lanternas_por_gomo: number;
+  lanternas_subindo: number;
+  state: LanternaProjectState;
+}
+
 export interface BandeiraColorEntry {
   hex: string;
   name: string;
@@ -294,4 +507,32 @@ export interface BandeiraPayload {
   altura_px: number;
   grid_runs: BandeiraGridRun[];
   color_table: BandeiraColorEntry[];
+}
+
+export interface Comunicado {
+  id: number;
+  titulo: string;
+  conteudo: string;
+  created_at: string;
+  total_views?: number;
+}
+
+export interface NotificacaoDados {
+  cliente_nome?: string;
+  cliente_email?: string;
+  plano_nome?: string;
+  valor?: number;
+  metodo?: string;
+  metodo_label?: string;
+  pagamento_id?: number;
+}
+
+export interface Notificacao {
+  id: number;
+  tipo: string;
+  titulo: string;
+  mensagem: string;
+  dados: NotificacaoDados | null;
+  lida: boolean;
+  created_at: string;
 }

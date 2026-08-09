@@ -59,6 +59,88 @@ final class PagamentoController
         return Response::json(['data' => $pagamento], 201);
     }
 
+    public function storeCartao(Request $request): Response
+    {
+        $userId = (int) $request->attribute('user_id', 0);
+        $user = $this->users->findById($userId);
+        if ($user === null) {
+            return Response::json(['error' => 'Usuario nao encontrado.'], 404);
+        }
+
+        $planoId = (int) ($request->input('plano_id') ?? 0);
+        $plano = $planoId > 0 ? $this->planos->findRawById($planoId) : null;
+        if ($plano === null || ((int) $plano['ativo']) !== 1) {
+            return Response::json(['error' => 'Plano nao encontrado ou indisponivel.'], 422);
+        }
+
+        $token = trim((string) ($request->input('token') ?? ''));
+        $paymentMethodId = trim((string) ($request->input('payment_method_id') ?? ''));
+        if ($token === '' || $paymentMethodId === '') {
+            return Response::json(['error' => 'Dados do cartao invalidos.'], 422);
+        }
+
+        // So credito e ate 4x (decisao de produto). Blindagem no servidor mesmo
+        // que o frontend ja limite -- o cliente e quem manda o valor.
+        $installments = (int) ($request->input('installments') ?? 1);
+        if ($installments < 1 || $installments > 4) {
+            return Response::json(['error' => 'Parcelamento permitido apenas de 1x a 4x.'], 422);
+        }
+
+        $issuerRaw = $request->input('issuer_id');
+        $issuerId = ($issuerRaw === null || $issuerRaw === '') ? null : (int) $issuerRaw;
+
+        $deviceRaw = $request->input('device_id');
+        $deviceId = is_string($deviceRaw) && $deviceRaw !== '' ? $deviceRaw : null;
+
+        $identification = null;
+        $identRaw = $request->input('identification');
+        if (is_array($identRaw)) {
+            $number = preg_replace('/\D/', '', (string) ($identRaw['number'] ?? '')) ?? '';
+            $type = trim((string) ($identRaw['type'] ?? 'CPF'));
+            if ($number !== '') {
+                $identification = ['type' => $type !== '' ? $type : 'CPF', 'number' => $number];
+            }
+        }
+
+        $notificationUrl = $this->notificationUrl($request);
+
+        try {
+            $pagamento = $this->pagamentos->criarComCartao(
+                $userId,
+                (string) $user['email'],
+                [
+                    'id' => (int) $plano['id'],
+                    'nome' => (string) $plano['nome'],
+                    'valor' => (float) $plano['valor'],
+                    'dias_acesso' => (int) $plano['dias_acesso'],
+                ],
+                $notificationUrl,
+                [
+                    'token' => $token,
+                    'payment_method_id' => $paymentMethodId,
+                    'installments' => $installments,
+                    'issuer_id' => $issuerId,
+                    'device_id' => $deviceId,
+                    'identification' => $identification,
+                ]
+            );
+        } catch (Throwable $e) {
+            return Response::json(['error' => $e->getMessage()], 502);
+        }
+
+        // Cartao aprovado libera o acesso na hora -- devolve o usuario atualizado
+        // (como o show() faz) pro frontend destravar o menu sem esperar o poll.
+        $freshUser = $this->users->findById($userId);
+
+        return Response::json([
+            'data' => $pagamento,
+            'user' => $freshUser === null ? null : [
+                'status' => $freshUser['status'],
+                'access_expires_at' => $freshUser['access_expires_at'],
+            ],
+        ], 201);
+    }
+
     public function show(Request $request): Response
     {
         $userId = (int) $request->attribute('user_id', 0);
