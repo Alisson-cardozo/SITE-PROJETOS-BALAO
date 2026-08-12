@@ -64,10 +64,25 @@ final class UserService
 
     public function listAll(): array
     {
+        // valor_pago/data_pagamento vem do ULTIMO pagamento aprovado do usuario
+        // — e o que ele REALMENTE pagou no periodo atual, imune a edicoes
+        // posteriores no valor do plano (que so mexem na tabela `planos`).
         return Db::connection()->query('
-            SELECT u.*, p.nome AS plano_nome, p.valor AS plano_valor
+            SELECT u.*, p.nome AS plano_nome, p.valor AS plano_valor,
+                   pg.valor AS valor_pago, pg.data_pagamento AS data_pagamento
             FROM users u
             LEFT JOIN planos p ON p.id = u.plano_id
+            LEFT JOIN (
+                SELECT x.user_id, x.valor,
+                       COALESCE(x.paid_at, x.created_at) AS data_pagamento
+                FROM pagamentos x
+                JOIN (
+                    SELECT user_id, MAX(id) AS mx
+                    FROM pagamentos
+                    WHERE status = "aprovado"
+                    GROUP BY user_id
+                ) last ON last.user_id = x.user_id AND last.mx = x.id
+            ) pg ON pg.user_id = u.id
             ORDER BY u.created_at DESC
         ')->fetchAll();
     }
@@ -90,7 +105,7 @@ final class UserService
      */
     public function grantAccess(int $userId, int $days, ?int $planoId = null, bool $updatePlano = true): void
     {
-        $sql = "UPDATE users SET status = 'active', access_expires_at = DATE_ADD(NOW(), INTERVAL :days DAY)";
+        $sql = "UPDATE users SET status = 'active', access_started_at = NOW(), access_expires_at = DATE_ADD(NOW(), INTERVAL :days DAY)";
         $params = ['id' => $userId, 'days' => $days];
 
         if ($updatePlano) {
@@ -231,9 +246,15 @@ final class UserService
             'role' => $user['role'],
             'status' => $user['status'],
             'access_expires_at' => $user['access_expires_at'] ?? null,
+            'access_started_at' => $user['access_started_at'] ?? null,
             'plano_id' => $planoId,
             'plano_nome' => $planoNome,
             'plano_valor' => $planoValor,
+            // O que o cliente REALMENTE pagou no periodo atual (ultimo pagamento
+            // aprovado). Null = acesso liberado manualmente pelo admin (sem
+            // pagamento) — a tela cai no plano_valor nesse caso.
+            'valor_pago' => isset($user['valor_pago']) && $user['valor_pago'] !== null ? (float) $user['valor_pago'] : null,
+            'data_pagamento' => $user['data_pagamento'] ?? null,
             // null = sem restricao (admin, ou plano que libera tudo) -- ver
             // PlanoService::abasForPlanoId. O frontend usa isso pra saber
             // quais abas do menu mostrar bloqueadas pra esse usuario.

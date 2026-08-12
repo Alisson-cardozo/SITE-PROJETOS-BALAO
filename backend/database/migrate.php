@@ -99,4 +99,34 @@ try {
     // Tabela system_settings pode nao existir ainda
 }
 
+// Data de inicio do acesso ("assinou em") na tabela users. access_expires_at
+// (fim) ja existia; essa guarda o INICIO do periodo atual — fixado quando o
+// admin libera acesso / o pagamento e aprovado (UserService::grantAccess).
+try {
+    $stmt = $pdo->query("SHOW COLUMNS FROM users LIKE 'access_started_at'");
+    if ($stmt->fetch() === false) {
+        $pdo->exec("ALTER TABLE users ADD COLUMN access_started_at DATETIME NULL AFTER access_expires_at");
+        echo "Coluna access_started_at adicionada na tabela users.\n";
+        // Backfill: usa a data do ULTIMO pagamento aprovado de cada usuario.
+        try {
+            $pdo->exec("
+                UPDATE users u
+                JOIN (
+                    SELECT p.user_id, MAX(COALESCE(p.paid_at, p.created_at)) AS started
+                    FROM pagamentos p
+                    WHERE p.status = 'aprovado'
+                    GROUP BY p.user_id
+                ) last ON last.user_id = u.id
+                SET u.access_started_at = last.started
+                WHERE u.access_started_at IS NULL
+            ");
+            echo "Backfill de access_started_at a partir dos pagamentos aprovados.\n";
+        } catch (Throwable $e) {
+            // pagamentos pode nao ter paid_at em bancos antigos — ignora backfill
+        }
+    }
+} catch (Throwable $e) {
+    // Tabela users pode nao existir ainda
+}
+
 echo "Schema aplicado com sucesso.\n";

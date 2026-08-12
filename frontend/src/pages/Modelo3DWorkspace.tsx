@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
-import { AlertTriangle, Box, Building2, ChevronLeft, Cloud, Cookie, Download, Eye, EyeOff, Film, Flag, ImagePlus, Lightbulb, Loader2, Moon, PaintBucket, RotateCcw, Sparkles, Sun, X } from 'lucide-react';
+import { AlertTriangle, Box, Building2, ChevronLeft, Cloud, Cookie, Download, Eye, EyeOff, Film, Flag, ImagePlus, Lightbulb, Loader2, Moon, PaintBucket, RotateCcw, Sparkles, Sun, Triangle, X } from 'lucide-react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { MoldSilhouettePreview } from '../components/MoldSilhouettePreview';
+import { LekWarpEditor, type WarpGrid } from '../components/LekWarpEditor';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { hexToRgb } from '../lib/colorMath';
@@ -1096,6 +1097,163 @@ function dataURLtoFile(dataurl: string, filename: string): File | null {
   }
 }
 
+/**
+ * Recorta o LEK: recebe a imagem crua do gomo (desenho colorido sobre fundo
+ * branco, tipo a foto de referencia) e devolve um PNG com o FUNDO BRANCO
+ * REMOVIDO (transparente), pra so o desenho aparecer quando repetido no balao.
+ *
+ * Estrategia = "reconhecer o lek" automaticamente: flood-fill a partir das 4
+ * bordas marcando todo pixel branco-ish que esta LIGADO na borda como
+ * transparente. Isso apaga so o fundo em volta do desenho — os brancos DENTRO
+ * do desenho (linhas/detalhes da arte) ficam intactos, porque nao encostam na
+ * borda. `tolerancePct` (0-100) e o ajuste manual: quanto maior, mais tons
+ * claros/acinzentados contam como fundo.
+ */
+function makeLekCutoutDataUrl(image: HTMLImageElement, tolerancePct: number): string | null {
+  const maxDim = 1400;
+  const scale = Math.min(1, maxDim / Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height));
+  const w = Math.max(1, Math.round((image.naturalWidth || image.width) * scale));
+  const h = Math.max(1, Math.round((image.naturalHeight || image.height) * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(image, 0, 0, w, h);
+
+  let imgData: ImageData;
+  try {
+    imgData = ctx.getImageData(0, 0, w, h);
+  } catch {
+    return null;
+  }
+  const data = imgData.data;
+
+  // 0 (pixel puro branco removido so no 100%) ate ~120 (remove cinza claro).
+  const tol = Math.max(0, Math.min(100, tolerancePct)) / 100 * 120;
+  const minChannel = 255 - tol;
+  const isBackgroundish = (idx: number): boolean => {
+    const r = data[idx];
+    const g = data[idx + 1];
+    const b = data[idx + 2];
+    // Perto do branco = todos os canais altos E baixa saturacao (nao apagar
+    // cores claras vivas tipo amarelo/ciano da arte).
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    return min >= minChannel && (max - min) <= 24 + tol * 0.4;
+  };
+
+  const total = w * h;
+  const visited = new Uint8Array(total);
+  const stack: number[] = [];
+
+  const pushIfBg = (px: number) => {
+    if (visited[px]) return;
+    if (isBackgroundish(px * 4)) {
+      visited[px] = 1;
+      stack.push(px);
+    }
+  };
+
+  for (let x = 0; x < w; x++) {
+    pushIfBg(x);
+    pushIfBg((h - 1) * w + x);
+  }
+  for (let y = 0; y < h; y++) {
+    pushIfBg(y * w);
+    pushIfBg(y * w + (w - 1));
+  }
+
+  while (stack.length > 0) {
+    const px = stack.pop() as number;
+    data[px * 4 + 3] = 0; // transparente
+
+    const x = px % w;
+    const y = (px - x) / w;
+    if (x > 0) pushIfBg(px - 1);
+    if (x < w - 1) pushIfBg(px + 1);
+    if (y > 0) pushIfBg(px - w);
+    if (y < h - 1) pushIfBg(px + w);
+  }
+
+  ctx.putImageData(imgData, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
+/** Raio interpolado do perfil na altura y (perfil com y crescente). */
+function radiusAtY(points: THREE.Vector2[], y: number): number {
+  if (y <= points[0].y) return points[0].x;
+  const last = points[points.length - 1];
+  if (y >= last.y) return last.x;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    if (a.y <= y && y <= b.y) {
+      const t = b.y === a.y ? 0 : (y - a.y) / (b.y - a.y);
+      return a.x + t * (b.x - a.x);
+    }
+  }
+  return last.x;
+}
+
+/** Sub-perfil entre yA e yB (com pontos interpolados nas pontas). */
+function subProfile(points: THREE.Vector2[], yA: number, yB: number): THREE.Vector2[] | null {
+  const eps = 1e-6;
+  const out: THREE.Vector2[] = [new THREE.Vector2(radiusAtY(points, yA), yA)];
+  for (const p of points) {
+    if (p.y > yA + eps && p.y < yB - eps) out.push(new THREE.Vector2(p.x, p.y));
+  }
+  out.push(new THREE.Vector2(radiusAtY(points, yB), yB));
+  return out.length >= 2 ? out : null;
+}
+
+/** Fracao de altura (0..1) do ponto MAIS LARGO do perfil (equador do balao). */
+function widestFraction(points: THREE.Vector2[]): number {
+  if (points.length < 2) return 0.5;
+  const yBottom = points[0].y;
+  const yTop = points[points.length - 1].y;
+  const span = yTop - yBottom;
+  if (span <= 0) return 0.5;
+  let maxR = -Infinity;
+  let yAtMax = yBottom + span / 2;
+  for (const p of points) {
+    if (p.x > maxR) {
+      maxR = p.x;
+      yAtMax = p.y;
+    }
+  }
+  return Math.max(0.15, Math.min(0.85, (yAtMax - yBottom) / span));
+}
+
+/** Fracoes das bordas das bandas (n-1 valores). 2 partes = equador; 3+ = iguais. */
+function bandFractions(points: THREE.Vector2[], n: number): number[] {
+  if (n <= 1) return [];
+  if (n === 2) return [widestFraction(points)];
+  const out: number[] = [];
+  for (let i = 1; i < n; i++) out.push(i / n);
+  return out;
+}
+
+/**
+ * Divide o perfil em N bandas (de baixo pra cima). Retorna array de sub-perfis
+ * (cada um vira uma LatheGeometry). bands[0] = mais de baixo, bands[n-1] = topo.
+ */
+function splitProfileIntoBands(points: THREE.Vector2[], n: number): (THREE.Vector2[] | null)[] {
+  if (points.length < 2 || n < 1) return [];
+  if (n === 1) return [points.map((p) => new THREE.Vector2(p.x, p.y))];
+  const yBottom = points[0].y;
+  const yTop = points[points.length - 1].y;
+  const span = yTop - yBottom;
+  const fracs = bandFractions(points, n).slice().sort((a, b) => a - b);
+  const bounds = [yBottom, ...fracs.map((f) => yBottom + f * span), yTop];
+  const bands: (THREE.Vector2[] | null)[] = [];
+  for (let k = 0; k < n; k++) {
+    bands.push(subProfile(points, bounds[k], bounds[k + 1]));
+  }
+  return bands;
+}
+
 export function Modelo3DWorkspace() {
   const { token } = useAuth();
 
@@ -1155,9 +1313,29 @@ export function Modelo3DWorkspace() {
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(() => draft3D?.imageDataUrl ?? null);
   const [bannerDataUrl, setBannerDataUrl] = useState<string | null>(() => draft3D?.bannerDataUrl ?? null);
 
+  // LEK: o cliente sobe o desenho de UM gomo (triangulo de cima + de baixo,
+  // sobre fundo branco). O sistema "reconhece" o lek removendo o fundo branco
+  // (recorte automatico, ajustavel pelo slider de tolerancia) e repete o gomo
+  // recortado N vezes em volta do balao. Independente do "Subir Imagem".
+  const [lekFile, setLekFile] = useState<File | null>(null);
+  const [lekDataUrl, setLekDataUrl] = useState<string | null>(() => draft3D?.lekDataUrl ?? null);
+  const [lekCutoutUrl, setLekCutoutUrl] = useState<string | null>(null);
+  // Tolerancia fixa da remocao automatica do fundo branco (sem slider).
+  const lekTolerance = 12;
+  const [lekProcessing, setLekProcessing] = useState(false);
+  const [lekError, setLekError] = useState<string | null>(null);
+
+  // Warp por PARTES: o cliente diz quantas partes o lek tem (ex: boca/bojo/bico),
+  // molda a grade de cada uma e escolhe a repeticao de cada parte. lekParts =
+  // grades; lekPartRepeats = quantas voltas cada parte da; lekPartUrls = as
+  // texturas retificadas resultantes (uma por parte) usadas no 3D.
+  const [lekParts, setLekParts] = useState<WarpGrid[] | null>(() => draft3D?.lekParts ?? null);
+  const [lekPartRepeats, setLekPartRepeats] = useState<number[] | null>(() => draft3D?.lekPartRepeats ?? null);
+  const [lekPartUrls, setLekPartUrls] = useState<(string | null)[]>([]);
+
   const [currentCategory, setCurrentCategory] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  type ThreeDTab = 'imagem' | 'lanternagem' | 'bandeira' | 'biscoito' | 'fogos' | 'exportar' | 'modelos';
+  type ThreeDTab = 'imagem' | 'lek' | 'lanternagem' | 'bandeira' | 'biscoito' | 'fogos' | 'exportar' | 'modelos';
   const [threeDTab, setThreeDTab] = useState<ThreeDTab>(() => draft3D?.threeDTab ?? 'imagem');
   const [showingTex, setShowingTex] = useState(false);
 
@@ -1193,6 +1371,11 @@ export function Modelo3DWorkspace() {
   const lanternaGridRef = useRef<{ gridWidth: number; gridHeight: number } | null>(null);
 
   const bannerGroupRef = useRef<THREE.Group | null>(null);
+
+  // Lek: base clara opaca (corpo do balao "papel") + 1 banda por PARTE, cada
+  // uma com a textura retificada da sua grade e sua propria repeticao.
+  const lekBaseMeshRef = useRef<THREE.Mesh | null>(null);
+  const lekPartMeshesRef = useRef<(THREE.Mesh | null)[]>([]);
 
   const fogosGroupRef = useRef<THREE.Group | null>(null);
   const fogosParticlesRef = useRef<FireworkParticleSystem | null>(null);
@@ -1265,6 +1448,9 @@ export function Modelo3DWorkspace() {
         threeDTab,
         imageDataUrl,
         bannerDataUrl,
+        lekDataUrl,
+        lekParts,
+        lekPartRepeats,
       };
       window.localStorage.setItem('sistema-novo:draft:3d', JSON.stringify(draft));
     } catch {}
@@ -1284,6 +1470,9 @@ export function Modelo3DWorkspace() {
     threeDTab,
     imageDataUrl,
     bannerDataUrl,
+    lekDataUrl,
+    lekParts,
+    lekPartRepeats,
   ]);
 
   // Restaura imagens salvas no localStorage (DataURL -> File) ao carregar F5
@@ -1295,6 +1484,10 @@ export function Modelo3DWorkspace() {
     if (draft3D?.bannerDataUrl && !bannerFile) {
       const restored = dataURLtoFile(draft3D.bannerDataUrl, 'bandeira-textura.png');
       if (restored) setBannerFile(restored);
+    }
+    if (draft3D?.lekDataUrl && !lekFile) {
+      const restored = dataURLtoFile(draft3D.lekDataUrl, 'lek-gomo.png');
+      if (restored) setLekFile(restored);
     }
   }, []);
 
@@ -1809,6 +2002,156 @@ export function Modelo3DWorkspace() {
     };
   }, [imageFile, selectedMoldKey, currentData]);
 
+  // Effect C2: processa o LEK cru -> PNG recortado (fundo branco removido).
+  // Roda quando o arquivo do lek ou a tolerancia (ajuste manual) muda.
+  useEffect(() => {
+    if (!lekFile) {
+      setLekCutoutUrl(null);
+      setLekError(null);
+      return;
+    }
+    let cancelled = false;
+    setLekProcessing(true);
+    setLekError(null);
+    const url = URL.createObjectURL(lekFile);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      if (cancelled) return;
+      const cut = makeLekCutoutDataUrl(img, lekTolerance);
+      if (cancelled) return;
+      if (cut) {
+        setLekCutoutUrl(cut);
+      } else {
+        setLekError('Não foi possível recortar esse lek. Tente outra imagem.');
+      }
+      setLekProcessing(false);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      if (cancelled) return;
+      setLekError('Não foi possível carregar essa imagem.');
+      setLekProcessing(false);
+    };
+    img.src = url;
+    return () => {
+      cancelled = true;
+    };
+  }, [lekFile, lekTolerance]);
+
+  // Effect C3: aplica o lek no balao em N BANDAS (uma por parte) — base clara
+  // opaca (corpo do balao) + cada parte na sua banda, com sua propria
+  // repeticao. Parte 0 (boca) fica no topo, ultima (bico) embaixo. Reconstroi
+  // quando as texturas/partes, as repeticoes ou o molde mudam.
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const fillMesh = fillMeshRef.current;
+    const wireMesh = wireMeshRef.current;
+    if (!scene || !fillMesh || !wireMesh) return;
+
+    const cleanup = () => {
+      lekPartMeshesRef.current.forEach((mesh) => {
+        if (!mesh) return;
+        scene.remove(mesh);
+        mesh.geometry.dispose();
+        const m = mesh.material;
+        if (m instanceof THREE.MeshStandardMaterial) m.map?.dispose();
+        if (m instanceof THREE.Material) m.dispose();
+      });
+      lekPartMeshesRef.current = [];
+      if (lekBaseMeshRef.current) {
+        scene.remove(lekBaseMeshRef.current);
+        if (lekBaseMeshRef.current.material instanceof THREE.Material) {
+          lekBaseMeshRef.current.material.dispose();
+        }
+        lekBaseMeshRef.current = null;
+      }
+    };
+
+    cleanup();
+
+    const points = profilePointsRef.current;
+    const urls = lekPartUrls;
+    const nParts = urls.length;
+    const hasAny = urls.some((u) => !!u);
+    if (!hasAny || !geometryRef.current || points.length < 2) {
+      if (!imageFile) {
+        fillMesh.visible = true;
+        wireMesh.visible = true;
+      }
+      return;
+    }
+
+    const yOffset = yOffsetRef.current;
+    const reps = lekPartRepeats ?? [];
+
+    // Base opaca clara = "papel" do balao aparecendo onde o fundo foi recortado.
+    const baseMesh = new THREE.Mesh(
+      geometryRef.current,
+      new THREE.MeshStandardMaterial({ color: 0xf5f4f0, side: THREE.DoubleSide, roughness: 0.55, metalness: 0.02 })
+    );
+    baseMesh.position.y = yOffset;
+    scene.add(baseMesh);
+    lekBaseMeshRef.current = baseMesh;
+
+    // Divide o perfil em N bandas (de baixo pra cima).
+    const bands = splitProfileIntoBands(points, nParts);
+    if (bands.length !== nParts) return;
+
+    fillMesh.visible = false;
+    wireMesh.visible = false;
+    lekPartMeshesRef.current = new Array(nParts).fill(null);
+
+    const loader = new THREE.TextureLoader();
+    let cancelled = false;
+
+    urls.forEach((url, partIndex) => {
+      if (!url) return;
+      // parte 0 (bico, ponta de cima) => banda mais de cima (bands[nParts-1-partIndex])
+      const bandPoints = bands[nParts - 1 - partIndex];
+      if (!bandPoints) return;
+      const rep = Math.max(1, Math.min(60, Math.round(reps[partIndex] ?? 4)));
+      loader.load(url, (texture) => {
+        if (cancelled) {
+          texture.dispose();
+          return;
+        }
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.repeat.set(rep, 1);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.generateMipmaps = true;
+        texture.minFilter = THREE.LinearMipmapLinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        if (rendererRef.current) {
+          texture.anisotropy = rendererRef.current.capabilities.getMaxAnisotropy();
+        }
+        const geo = new THREE.LatheGeometry(bandPoints, 60);
+        const mesh = new THREE.Mesh(
+          geo,
+          new THREE.MeshStandardMaterial({
+            map: texture,
+            transparent: true,
+            alphaTest: 0.5,
+            side: THREE.DoubleSide,
+            roughness: 0.35,
+            metalness: 0.05,
+            polygonOffset: true,
+            polygonOffsetFactor: -1,
+            polygonOffsetUnits: -1,
+          })
+        );
+        mesh.position.y = yOffset;
+        scene.add(mesh);
+        lekPartMeshesRef.current[partIndex] = mesh;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [lekPartUrls, lekPartRepeats, selectedMoldKey, currentData, imageFile]);
+
   /**
    * Effect D: Bandeira/Painel/Letreiro pendurado embaixo do balao — os 3 sao
    * o mesmo formato de imagem, entao usam 1 slot so. So importa uma imagem
@@ -1965,6 +2308,53 @@ export function Modelo3DWorkspace() {
       setBannerDataUrl(null);
     }
     event.target.value = '';
+  }, []);
+
+  const handleLekChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+    setLekFile(file);
+    // Lek novo = zera as grades/repeticoes/texturas anteriores.
+    setLekParts(null);
+    setLekPartRepeats(null);
+    setLekPartUrls([]);
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => setLekDataUrl(e.target?.result as string);
+      reader.readAsDataURL(file);
+    } else {
+      setLekDataUrl(null);
+    }
+    event.target.value = '';
+  }, []);
+
+  const handleRemoveLek = useCallback(() => {
+    setLekFile(null);
+    setLekDataUrl(null);
+    setLekCutoutUrl(null);
+    setLekError(null);
+    setLekParts(null);
+    setLekPartRepeats(null);
+    setLekPartUrls([]);
+  }, []);
+
+  // Callbacks do editor de partes
+  const handleLekConfigChange = useCallback((parts: WarpGrid[], repeats: number[]) => {
+    setLekParts(parts);
+    setLekPartRepeats(repeats);
+    // Garante o array de urls do tamanho certo (preenchido pelo onWarpedChange).
+    setLekPartUrls((prev) => {
+      const next = parts.map((_, i) => prev[i] ?? null);
+      return next;
+    });
+  }, []);
+
+  const handleLekWarpedChange = useCallback((index: number, url: string | null) => {
+    setLekPartUrls((prev) => {
+      const next = prev.slice();
+      while (next.length <= index) next.push(null);
+      next[index] = url;
+      return next;
+    });
   }, []);
 
   const handleOpenLanternaPicker = useCallback(() => {
@@ -2204,6 +2594,9 @@ export function Modelo3DWorkspace() {
           <button type="button" className={threeDTab === 'imagem' ? 'active' : ''} onClick={() => setThreeDTab('imagem')}>
             Subir Imagem
           </button>
+          <button type="button" className={threeDTab === 'lek' ? 'active' : ''} onClick={() => setThreeDTab('lek')}>
+            Lek (Gomo)
+          </button>
           <button type="button" className={threeDTab === 'lanternagem' ? 'active' : ''} onClick={() => setThreeDTab('lanternagem')}>
             Lanternagem
           </button>
@@ -2240,7 +2633,7 @@ export function Modelo3DWorkspace() {
                     <RotateCcw size={16} />
                     Remover imagem
                   </button>
-                  
+
                   <button type="button" className="mold-secondary-button" onClick={handleToggleWireframe}>
                     {showingTex ? <EyeOff size={16} /> : <Eye size={16} />}
                     {showingTex ? 'Ver Wireframe' : 'Ver Imagem'}
@@ -2248,6 +2641,41 @@ export function Modelo3DWorkspace() {
                 </>
               )}
             </>
+          ) : null}
+
+          {threeDTab === 'lek' ? (
+            <div className="modelo3d-fogos-controls" style={{ gap: '12px', width: '100%' }}>
+              <label className="mold-save-button modelo3d-upload-label">
+                <ImagePlus size={16} />
+                {lekFile ? 'Trocar Lek' : 'Subir Lek (1 gomo)'}
+                <input type="file" accept="image/*" onChange={handleLekChange} className="modelo3d-file-input" />
+              </label>
+
+              {lekFile && (
+                <>
+                  {lekCutoutUrl && (
+                    <LekWarpEditor
+                      sourceUrl={lekCutoutUrl}
+                      parts={lekParts}
+                      repeats={lekPartRepeats}
+                      onConfigChange={handleLekConfigChange}
+                      onWarpedChange={handleLekWarpedChange}
+                    />
+                  )}
+
+                  {lekProcessing && (
+                    <p className="bandeira-size-hint">
+                      <Loader2 size={14} className="mold-import-spinner" /> Reconhecendo o lek...
+                    </p>
+                  )}
+
+                  <button type="button" className="mold-secondary-button" onClick={handleRemoveLek}>
+                    <RotateCcw size={16} />
+                    Remover lek
+                  </button>
+                </>
+              )}
+            </div>
           ) : null}
 
           {threeDTab === 'lanternagem' ? (
@@ -2525,9 +2953,22 @@ export function Modelo3DWorkspace() {
 
         {imageError && <p className="mold-import-error">{imageError}</p>}
         {bannerError && <p className="mold-import-error">{bannerError}</p>}
-        {!imageFile && (
+        {lekError && <p className="mold-import-error">{lekError}</p>}
+        {threeDTab === 'imagem' && !imageFile && (
           <p className="bandeira-size-hint">
             Sem imagem, o balão aparece só com uma cor sólida — suba uma foto pra ela envolver o modelo 3D.
+          </p>
+        )}
+        {threeDTab === 'lek' && !lekFile && (
+          <p className="bandeira-size-hint">
+            Suba o desenho do lek (sobre fundo branco). O sistema remove o fundo sozinho; depois escolha
+            <strong> quantas partes</strong> o lek tem (ex: boca/bojo/bico) e a repetição de cada parte.
+          </p>
+        )}
+        {threeDTab === 'lek' && lekCutoutUrl && (
+          <p className="bandeira-size-hint">
+            Cada <strong>parte</strong> tem sua grade e sua repetição — bojo com <strong>1</strong> = corrido; pontas com
+            mais repetições viram os gomos em volta do balão.
           </p>
         )}
         {appliedLanternaLabel && (
@@ -2654,6 +3095,18 @@ export function Modelo3DWorkspace() {
         >
           <ImagePlus size={17} />
           <span>Imagem</span>
+        </button>
+        <button
+          type="button"
+          className={`mobile-bar-btn ${threeDTab === 'lek' ? 'active' : ''}`}
+          onClick={() => {
+            setThreeDTab('lek');
+            document.querySelector('.modelo3d-actions-row')?.scrollIntoView({ behavior: 'smooth' });
+          }}
+          title="Aba Lek (Gomo)"
+        >
+          <Triangle size={17} />
+          <span>Lek</span>
         </button>
         <button
           type="button"

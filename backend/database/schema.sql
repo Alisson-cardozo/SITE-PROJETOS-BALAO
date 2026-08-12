@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS users (
   -- (ou quando um pagamento e aprovado) — login passa a ser recusado depois
   -- dessa data mesmo com status='active'.
   access_expires_at DATETIME NULL,
+  -- Inicio do periodo de acesso atual ("assinou em"). Fixado junto com
+  -- access_expires_at no grantAccess. NULL = nunca teve acesso liberado.
+  access_started_at DATETIME NULL,
   -- Plano do ultimo pagamento aprovado — define quais abas o usuario pode
   -- usar (ver PlanoService::abasForPlanoId / AbaAccessMiddleware). NULL =
   -- sem plano especifico (acesso liberado manualmente pelo admin via

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AppShell } from '../components/AppShell';
 import { SectionPlaceholder } from '../components/SectionPlaceholder';
 import {
@@ -15,21 +15,28 @@ import { api } from '../lib/api';
 import { hasPaidAccess } from '../lib/access';
 import { useAuth } from '../lib/auth';
 import type { LanternaProject, MoldProjectSummary, MoldSummary, SystemSettings, Comunicado } from '../types';
-import { BaixarAppPage } from './BaixarAppPage';
-import { BandeiraWorkspace } from './BandeiraWorkspace';
-import { BiscoitoGolfierWorkspace } from './BiscoitoGolfierWorkspace';
-import { LanternagemBojoWorkspace } from './LanternagemBojoWorkspace';
-import { LanternagemProjectGallery } from './LanternagemProjectGallery';
-import { Modelo3DWorkspace } from './Modelo3DWorkspace';
-import { MoldGallery } from './MoldGallery';
-import { MoldTableForm } from './MoldTableForm';
-import { PainelWorkspace } from './PainelWorkspace';
-import { PlotterRiscadoPage } from './PlotterRiscadoPage';
-import { PlotterTacosPage } from './PlotterTacosPage';
-import { ProjectGallery } from './ProjectGallery';
-import { RifasWorkspace } from './RifasWorkspace';
+// Tela de planos fica "eager" — e o que o cliente SEM plano ve (caso mais
+// comum), entao nao vale a pena separar num pedaco a parte.
 import { SolicitarAcessoPage } from './SolicitarAcessoPage';
-import { UserSettingsPage } from './UserSettingsPage';
+
+// CODE SPLITTING: cada ferramenta vira um ARQUIVO JS separado, baixado SO
+// quando o cliente abre a aba. Cliente sem o plano nunca abre -> nunca baixa o
+// codigo daquela ferramenta. O 3D (Three.js), que e o maior, sai do pacote
+// principal.
+const BaixarAppPage = lazy(() => import('./BaixarAppPage').then((m) => ({ default: m.BaixarAppPage })));
+const BandeiraWorkspace = lazy(() => import('./BandeiraWorkspace').then((m) => ({ default: m.BandeiraWorkspace })));
+const BiscoitoGolfierWorkspace = lazy(() => import('./BiscoitoGolfierWorkspace').then((m) => ({ default: m.BiscoitoGolfierWorkspace })));
+const LanternagemBojoWorkspace = lazy(() => import('./LanternagemBojoWorkspace').then((m) => ({ default: m.LanternagemBojoWorkspace })));
+const LanternagemProjectGallery = lazy(() => import('./LanternagemProjectGallery').then((m) => ({ default: m.LanternagemProjectGallery })));
+const Modelo3DWorkspace = lazy(() => import('./Modelo3DWorkspace').then((m) => ({ default: m.Modelo3DWorkspace })));
+const MoldGallery = lazy(() => import('./MoldGallery').then((m) => ({ default: m.MoldGallery })));
+const MoldTableForm = lazy(() => import('./MoldTableForm').then((m) => ({ default: m.MoldTableForm })));
+const PainelWorkspace = lazy(() => import('./PainelWorkspace').then((m) => ({ default: m.PainelWorkspace })));
+const PlotterRiscadoPage = lazy(() => import('./PlotterRiscadoPage').then((m) => ({ default: m.PlotterRiscadoPage })));
+const PlotterTacosPage = lazy(() => import('./PlotterTacosPage').then((m) => ({ default: m.PlotterTacosPage })));
+const ProjectGallery = lazy(() => import('./ProjectGallery').then((m) => ({ default: m.ProjectGallery })));
+const RifasWorkspace = lazy(() => import('./RifasWorkspace').then((m) => ({ default: m.RifasWorkspace })));
+const UserSettingsPage = lazy(() => import('./UserSettingsPage').then((m) => ({ default: m.UserSettingsPage })));
 
 interface PlotterTarget {
   moldId: number;
@@ -108,12 +115,29 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
 
   const navGroups = useMemo(
     () => {
+      // Sem plano pago: menu mostra SO "Solicitar Acesso" (os planos). Todas as
+      // outras abas somem ate o cliente pagar.
       if (locked) {
-        return [[solicitarAcessoNavItem], visibleMainNavItems, visibleAccountNavItems];
+        return [[solicitarAcessoNavItem]];
       }
-      return [visibleMainNavItems, visibleAccountNavItems, ...extraNavGroups];
+      // Com plano: mostra SO as abas que o plano do usuario libera (allowed_abas).
+      // As que o plano nao inclui somem do menu (nao aparecem mais com cadeado).
+      // Admin (allowed_abas === null) ve tudo.
+      const keepByPlano = (id: string): boolean => {
+        if (!user || user.role === 'admin' || !user.allowed_abas) return true;
+        const group = PLANO_ABA_GROUP_BY_NAV_ID[id];
+        if (!group) return true; // configuracoes etc — sempre visivel
+        return user.allowed_abas.includes(group);
+      };
+      const planoMainNavItems = visibleMainNavItems
+        .filter((item) => (item.children ? true : keepByPlano(item.id)))
+        .map((item) =>
+          item.children ? { ...item, children: item.children.filter((child) => keepByPlano(child.id)) } : item
+        )
+        .filter((item) => !item.children || item.children.length > 0);
+      return [planoMainNavItems, visibleAccountNavItems, ...extraNavGroups];
     },
-    [locked, visibleMainNavItems, visibleAccountNavItems, extraNavGroups]
+    [locked, visibleMainNavItems, visibleAccountNavItems, extraNavGroups, user]
   );
   const selectableItems = useMemo(() => navGroups.flatMap((group) => flattenNavItems(group)), [navGroups]);
 
@@ -183,6 +207,15 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
       // ignora se localStorage nao gravar (modo privado etc)
     }
   }, [activeId]);
+
+  // Se a aba ativa nao existe mais no menu (ex: ficou sem plano -> so sobra
+  // "Solicitar Acesso"; ou o plano nao inclui a aba salva) manda pra 1a aba
+  // disponivel.
+  useEffect(() => {
+    if (!selectableItems.some((item) => item.id === activeId)) {
+      setActiveId(selectableItems[0].id);
+    }
+  }, [selectableItems, activeId]);
 
   useEffect(() => {
     try {
@@ -308,6 +341,7 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
       onLogout={() => void logout()}
       socialLinks={systemSettings}
     >
+      <Suspense fallback={<div style={{ padding: '48px', textAlign: 'center', color: '#94a3b8' }}>Carregando…</div>}>
       {blocked ? (
         <SectionPlaceholder item={activeItem} note="Essa area nao esta disponivel no momento." />
       ) : isLockedTab ? (
@@ -369,6 +403,7 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
       ) : (
         <SectionPlaceholder item={activeItem} />
       )}
+      </Suspense>
     </AppShell>
 
     {/* Pop-up de Comunicado (exibido apenas 1 vez para cada cliente) */}

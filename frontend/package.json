@@ -22,6 +22,7 @@
     "@types/three": "^0.185.1",
     "@vitejs/plugin-react": "^4.3.3",
     "typescript": "^5.6.3",
-    "vite": "^5.4.10"
+    "vite": "^5.4.10",
+    "vite-plugin-javascript-obfuscator": "^3.1.0"
   }
 }

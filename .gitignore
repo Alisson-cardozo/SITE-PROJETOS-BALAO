@@ -5,9 +5,16 @@ frontend/node_modules/
 frontend/dist/
 *.tsbuildinfo
 
-# Environment / secrets
+# Environment / secrets (NUNCA commitar — .env.example/.example ficam, esses tem segredo real)
+.env
+.env.*
+!.env.example
+!.env.production.example
 backend/.env
-.env.production
+
+
+# Compose LOCAL de teste — tem senha de banco em texto, nao vai pro repo
+docker-compose.local.yml
 
 # Runtime data (user uploads, logs) -- not source code
 backend/public/uploads/

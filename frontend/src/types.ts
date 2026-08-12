@@ -8,9 +8,15 @@ export interface User {
   role: UserRole;
   status: UserStatus;
   access_expires_at?: string | null;
+  /** Inicio do periodo de acesso atual ("assinou em"). */
+  access_started_at?: string | null;
   plano_id?: number | null;
   plano_nome?: string | null;
   plano_valor?: number | null;
+  /** Valor REALMENTE pago no periodo atual (ultimo pagamento aprovado). Null = liberacao manual. */
+  valor_pago?: number | null;
+  /** Data do ultimo pagamento aprovado. */
+  data_pagamento?: string | null;
   /** Ids de aba que o plano atual libera. null = sem restricao (admin, ou
    * plano que libera tudo) -- ver PlanoService::abasForPlanoId no backend. */
   allowed_abas?: string[] | null;

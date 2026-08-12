@@ -490,11 +490,12 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
         return prev;
       }
 
-      let clampedAltura = Math.max(1, Math.floor(nextAltura) || 1);
+      // Aceita passos de 0.5 cm (ex: 1.5, 2, 2.5, 3...) — antes so inteiro.
+      let clampedAltura = Math.max(0.5, Math.round((Number(nextAltura) || 1) * 2) / 2);
       if (sectionId === 'bico') {
         const maxHeight = maxHeightForBicoPartition(prev, partitionId);
         const subindo = Math.max(1, partition.tacosSubindo ?? 1);
-        const maxAltura = Math.max(1, Math.floor(maxHeight / subindo));
+        const maxAltura = Math.max(0.5, Math.floor((maxHeight / subindo) * 2) / 2);
         clampedAltura = Math.min(clampedAltura, maxAltura);
       }
 
@@ -1030,16 +1031,17 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
                                         <span>Altura do taco (cm)</span>
                                         <input
                                           type="number"
-                                          min={1}
+                                          min={0.5}
                                           max={maxAlturaTacoEfetivo}
-                                          step={1}
-                                          inputMode="numeric"
+                                          step={0.5}
+                                          inputMode="decimal"
                                           defaultValue={partition.alturaTacoCm}
                                           key={`at-${partition.id}-${partition.alturaTacoCm}`}
                                           onBlur={(event) => {
+                                            // arredonda pra 0.5 mais proximo (aceita 1.5, 2, 2.5...)
                                             let next = Math.max(
-                                              1,
-                                              Math.min(maxAlturaTaco, Math.floor(Number(event.target.value)) || 1)
+                                              0.5,
+                                              Math.min(maxAlturaTaco, Math.round((Number(event.target.value) || 1) * 2) / 2)
                                             );
                                             if (secao.id === 'bico' && next > maxAlturaTacoEfetivo) {
                                               next = maxAlturaTacoEfetivo;
@@ -1059,6 +1061,39 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
                                             }
                                           }}
                                         />
+                                        {/* Presets rapidos de tamanho de taco */}
+                                        <div className="plotter-taco-presets" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+                                          {[1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5].map((preset) => {
+                                            const disabled = preset > maxAlturaTacoEfetivo;
+                                            const active = Math.abs((partition.alturaTacoCm ?? 0) - preset) < 0.01;
+                                            return (
+                                              <button
+                                                key={preset}
+                                                type="button"
+                                                disabled={disabled}
+                                                onClick={() => {
+                                                  if (!disabled && !active) {
+                                                    updatePartitionAlturaTaco(secao.id, partition.id, preset);
+                                                  }
+                                                }}
+                                                title={disabled ? 'Não cabe no espaço restante' : `Taco de ${preset} cm`}
+                                                style={{
+                                                  padding: '4px 10px',
+                                                  borderRadius: '6px',
+                                                  fontSize: '12px',
+                                                  fontWeight: 600,
+                                                  cursor: disabled ? 'not-allowed' : 'pointer',
+                                                  border: `1px solid ${active ? '#48bb78' : '#2d3748'}`,
+                                                  background: active ? 'rgba(72,187,120,0.15)' : '#1a2233',
+                                                  color: disabled ? '#4a5568' : active ? '#48bb78' : '#cbd5e0',
+                                                  opacity: disabled ? 0.5 : 1,
+                                                }}
+                                              >
+                                                {preset} cm
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
                                       </label>
                                     </div>
 

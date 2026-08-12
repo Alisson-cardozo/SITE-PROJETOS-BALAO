@@ -753,7 +753,8 @@ export function AdminUsersPage() {
                   <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', background: '#161e2e', position: 'sticky', top: 0 }}>Papel</th>
                   <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', background: '#161e2e', position: 'sticky', top: 0 }}>Status</th>
                   <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', background: '#161e2e', position: 'sticky', top: 0 }}>Plano Atual</th>
-                  <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', background: '#161e2e', position: 'sticky', top: 0 }}>Valor Plano</th>
+                  <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', background: '#161e2e', position: 'sticky', top: 0 }}>Valor Pago</th>
+                  <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', background: '#161e2e', position: 'sticky', top: 0 }}>Assinou Em</th>
                   <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', background: '#161e2e', position: 'sticky', top: 0 }}>Acesso Até</th>
                   <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', background: '#161e2e', position: 'sticky', top: 0 }}>Cadastrado Em</th>
                   <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', width: '220px', background: '#161e2e', position: 'sticky', top: 0 }}>Ações</th>
@@ -762,7 +763,7 @@ export function AdminUsersPage() {
               <tbody>
                 {filteredUsers.length === 0 ? (
                   <tr>
-                    <td colSpan={8} style={{ padding: '32px', textAlign: 'center', color: '#718096' }}>
+                    <td colSpan={9} style={{ padding: '32px', textAlign: 'center', color: '#718096' }}>
                       Nenhum cliente encontrado com os filtros aplicados.
                     </td>
                   </tr>
@@ -864,9 +865,21 @@ export function AdminUsersPage() {
                           {u.plano_nome || <span style={{ color: '#4a5568', fontStyle: 'italic' }}>Nenhum</span>}
                         </td>
 
-                        {/* Plano Valor */}
+                        {/* Valor Pago (o que o cliente pagou no periodo atual; cai no valor do plano se foi liberacao manual) */}
                         <td style={{ padding: '14px 16px', color: '#48bb78', fontSize: '13px', fontWeight: 600 }}>
-                          {u.plano_valor !== null && u.plano_valor !== undefined ? formatCurrency(u.plano_valor) : '-'}
+                          {(() => {
+                            const v = u.valor_pago ?? u.plano_valor;
+                            return v !== null && v !== undefined ? formatCurrency(v) : '-';
+                          })()}
+                        </td>
+
+                        {/* Assinou Em (inicio do periodo de acesso atual) */}
+                        <td style={{ padding: '14px 16px', color: '#cbd5e0', fontSize: '13px' }}>
+                          {u.access_started_at
+                            ? formatDataHora(u.access_started_at)
+                            : u.data_pagamento
+                              ? formatDataHora(u.data_pagamento)
+                              : '—'}
                         </td>
 
                         {/* Acesso Até */}
