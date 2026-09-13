@@ -3703,7 +3703,132 @@ svg {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  max-width: 420px;
+  max-width: 480px;
+}
+
+.bandeira-upload-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bandeira-upload-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid #263349;
+  background: #0f1726;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.bandeira-upload-option:hover {
+  border-color: #3a4d6b;
+  background: #131e30;
+}
+
+.bandeira-upload-option-primary {
+  border-color: #2f9e6b;
+  background: rgba(47, 158, 107, 0.08);
+}
+
+.bandeira-upload-option-primary:hover {
+  border-color: #38b87d;
+  background: rgba(47, 158, 107, 0.14);
+}
+
+.bandeira-upload-option-primary.has-file {
+  border-style: solid;
+  border-color: #2f9e6b;
+  background: rgba(47, 158, 107, 0.12);
+}
+
+.bandeira-upload-option-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  background: #182337;
+  color: #8fa3bd;
+}
+
+.bandeira-upload-option-primary .bandeira-upload-option-icon {
+  background: rgba(47, 158, 107, 0.16);
+  color: #4fd394;
+}
+
+.bandeira-upload-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bandeira-upload-option-text strong {
+  font-size: 14px;
+  color: #e6edf5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bandeira-upload-option-text small {
+  font-size: 12px;
+  color: #8fa3bd;
+}
+
+.bandeira-preview-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 140px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid #263349;
+  background: #0f1726;
+  background-image: linear-gradient(45deg, #182337 25%, transparent 25%), linear-gradient(-45deg, #182337 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #182337 75%), linear-gradient(-45deg, transparent 75%, #182337 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+}
+
+.bandeira-preview-canvas {
+  max-width: 100%;
+  border-radius: 4px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.bandeira-preview-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 38, 0.55);
+  border-radius: 12px;
+}
+
+.bandeira-preview-empty {
+  margin: 0;
+  font-size: 12px;
+  color: #6b7d99;
+  text-align: center;
+}
+
+.bandeira-file-input-hidden {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .bandeira-create-panel {
@@ -3838,6 +3963,54 @@ svg {
   font-size: 12px;
 }
 
+/* Grade com regua (usada so pelo Painel) — canto + regua de cima (colunas) +
+   regua da lateral (linhas) + o palco de sempre, cada um no seu quadrante. */
+.bandeira-canvas-area {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  grid-template-rows: 22px 1fr;
+}
+
+.bandeira-ruler-corner {
+  grid-column: 1;
+  grid-row: 1;
+  background: #0f1726;
+  border: 1px solid #263349;
+  border-right: none;
+  border-bottom: none;
+  border-radius: 12px 0 0 0;
+}
+
+.bandeira-ruler {
+  display: block;
+  background: #0f1726;
+  border: 1px solid #263349;
+}
+
+.bandeira-ruler-top {
+  grid-column: 2;
+  grid-row: 1;
+  width: 100%;
+  border-left: none;
+  border-bottom: none;
+  border-radius: 0 12px 0 0;
+}
+
+.bandeira-ruler-left {
+  grid-column: 1;
+  grid-row: 2;
+  height: 100%;
+  border-right: none;
+  border-top: none;
+  border-radius: 0 0 0 12px;
+}
+
+.bandeira-canvas-area .bandeira-canvas-stage {
+  grid-column: 2;
+  grid-row: 2;
+  border-radius: 0 0 12px 0;
+}
+
 .bandeira-canvas-stage {
   overflow: auto;
   border-radius: 12px;
@@ -3887,6 +4060,7 @@ svg {
   flex: 0 0 320px;
   width: 320px;
   min-width: 280px;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -3896,6 +4070,15 @@ svg {
   padding: 18px;
   max-height: calc(100vh - 140px);
   overflow-y: auto;
+  /* Nunca rola pro lado — o conteudo se ajusta na largura do painel. */
+  overflow-x: hidden;
+}
+
+/* Quebra palavras longas (ex: nome de arquivo enviado) pra nao estourar. */
+.bandeira-side-panel,
+.bandeira-side-panel * {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .bandeira-side-panel h3 {
@@ -4102,6 +4285,37 @@ svg {
   line-height: 1.5;
 }
 
+.bandeira-existing-colors-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.bandeira-existing-color-swatch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: none;
+  cursor: pointer;
+}
+
+.bandeira-existing-color-swatch:hover {
+  background: #162033;
+}
+
+.bandeira-existing-color-swatch.active {
+  border-color: #3f7ac1;
+  background: rgba(63, 122, 193, 0.2);
+}
+
+.bandeira-existing-color-swatch .bandeira-swatch {
+  width: 22px;
+  height: 22px;
+}
+
 .bandeira-swatch {
   display: inline-block;
   width: 18px;
@@ -4122,9 +4336,15 @@ svg {
 
 .bandeira-sidebar-tabs {
   margin: 4px 0 12px;
+  /* Abas quebram em varias linhas em vez de estourar a largura do painel
+     (nao precisa mais rolar pro lado). Vale pra qualquer tamanho de tela. */
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .bandeira-sidebar-tabs button {
+  flex: 1 1 calc(50% - 6px);
+  min-width: 0;
   font-size: 12px;
   padding: 8px 6px;
 }
@@ -7869,3 +8089,384 @@ svg {
 }
 
 
+
+/* ===== Destaque do campo de cupom (Solicitar Acesso) ===== */
+@keyframes cupomPulse {
+  0%, 100% { box-shadow: 0 0 0 1px #2f6f4f, 0 0 0 0 rgba(72, 187, 120, 0); }
+  50%      { box-shadow: 0 0 0 1px #48bb78, 0 0 22px 3px rgba(72, 187, 120, 0.38); }
+}
+@keyframes cupomFloat {
+  0%, 100% { transform: translateY(0) rotate(-6deg); }
+  50%      { transform: translateY(-4px) rotate(-6deg); }
+}
+@keyframes cupomShine {
+  0%   { background-position: -160% 0; }
+  60%, 100% { background-position: 160% 0; }
+}
+.cupom-highlight {
+  position: relative;
+  border: 1px solid #2f6f4f !important;
+  animation: cupomPulse 2.2s ease-in-out infinite;
+  overflow: hidden;
+}
+/* brilho passando por cima do card */
+.cupom-highlight::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 35%, rgba(72, 187, 120, 0.14) 50%, transparent 65%);
+  background-size: 200% 100%;
+  animation: cupomShine 3.4s ease-in-out infinite;
+}
+.cupom-highlight-icon {
+  display: inline-block;
+  animation: cupomFloat 2.2s ease-in-out infinite;
+}
+.cupom-highlight-badge {
+  display: inline-block;
+  background: #48bb78;
+  color: #06210f;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+}
+
+/* "digitando…" do assistente de medidas */
+@keyframes tacoTypingBlink { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+.taco-typing { animation: tacoTypingBlink 1.1s ease-in-out infinite; }
+
+/* ===== Página pública de Solicitar Molde — efeitos ===== */
+@keyframes solicitarBgShift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.solicitar-molde-bg {
+  background: linear-gradient(135deg, #0b1220 0%, #10203a 30%, #0e1730 55%, #1a1030 100%);
+  background-size: 300% 300%;
+  animation: solicitarBgShift 20s ease infinite;
+  position: relative;
+  overflow: hidden;
+}
+/* brilho suave girando atrás do conteúdo */
+.solicitar-molde-bg::before {
+  content: '';
+  position: absolute;
+  top: -20%; left: 50%;
+  width: 700px; height: 700px;
+  transform: translateX(-50%);
+  background: radial-gradient(circle, rgba(66,153,225,0.16), transparent 60%);
+  filter: blur(30px);
+  pointer-events: none;
+  animation: solicitarGlow 12s ease-in-out infinite;
+}
+@keyframes solicitarGlow {
+  0%, 100% { opacity: 0.5; transform: translateX(-50%) scale(1); }
+  50%      { opacity: 0.9; transform: translateX(-50%) scale(1.15); }
+}
+/* nome com brilho passando */
+.solicitar-brand {
+  background: linear-gradient(90deg, #cfe4ff, #ffffff 45%, #d6c2ff 70%, #cfe4ff);
+  background-size: 220% auto;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  animation: solicitarShine 5s linear infinite;
+}
+@keyframes solicitarShine { to { background-position: 220% center; } }
+/* balões subindo devagar */
+.solicitar-balao {
+  position: absolute; bottom: -60px;
+  font-size: 26px; opacity: 0.14; pointer-events: none;
+  animation: solicitarFloat linear infinite;
+}
+@keyframes solicitarFloat {
+  0%   { transform: translateY(0) rotate(-4deg); opacity: 0; }
+  10%  { opacity: 0.16; }
+  90%  { opacity: 0.16; }
+  100% { transform: translateY(-110vh) rotate(4deg); opacity: 0; }
+}
+
+/* Override: fundo com IMAGEM (troca o efeito animado) */
+.solicitar-molde-bg {
+  background:
+    linear-gradient(rgba(7,11,18,0.85), rgba(7,11,18,0.93)),
+    url('/molde-fundo.png') center top / cover no-repeat fixed,
+    #0b1220 !important;
+  animation: none !important;
+}
+.solicitar-molde-bg::before { display: none !important; }
+.solicitar-balao { display: none !important; }
+
+/* Atalho de "Molde sob medida" no login */
+.auth-molde-cta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  text-decoration: none;
+  background: linear-gradient(135deg, rgba(66,153,225,0.18), rgba(159,122,234,0.20));
+  border: 1px solid rgba(120,150,230,0.45);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.auth-molde-cta:hover {
+  transform: translateY(-2px);
+  border-color: rgba(150,180,255,0.8);
+  box-shadow: 0 10px 26px rgba(66,120,220,0.28);
+}
+.auth-molde-cta-icon { font-size: 26px; flex-shrink: 0; }
+.auth-molde-cta-text { display: flex; flex-direction: column; line-height: 1.35; }
+.auth-molde-cta-text strong { color: #eaf1ff; font-size: 14px; }
+.auth-molde-cta-text small { color: #a9b8d6; font-size: 12px; margin-top: 2px; }
+
+/* Reforço: deixar claro que a CTA é um botão clicável */
+.auth-molde-cta { cursor: pointer; position: relative; animation: authMoldePulse 2.6s ease-in-out infinite; }
+.auth-molde-cta:active { transform: scale(0.975); box-shadow: 0 4px 12px rgba(66,120,220,0.35); }
+/* seta indicando clique */
+.auth-molde-cta::after {
+  content: '→';
+  margin-left: auto;
+  font-size: 20px;
+  color: #cfe0ff;
+  transition: transform 0.15s ease;
+}
+.auth-molde-cta:hover::after { transform: translateX(5px); }
+@keyframes authMoldePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(120,150,230,0.0); }
+  50%      { box-shadow: 0 0 0 4px rgba(120,150,230,0.18); }
+}
+
+/* Card de plano com Assistente-IA Carla: borda gradiente animada + brilho +
+   selo no topo pra destacar entre os outros planos. */
+.plano-carla-card {
+  position: relative;
+  border: 1px solid transparent !important;
+  background-clip: padding-box;
+  animation: planoCarlaGlow 3s ease-in-out infinite;
+}
+.plano-carla-card::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  padding: 2px;
+  background: linear-gradient(120deg, #805ad5, #4299e1, #9f7aea, #805ad5);
+  background-size: 300% 300%;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: planoCarlaBorder 4s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+.plano-carla-card > * { position: relative; z-index: 1; }
+.plano-carla-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin-bottom: 8px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(120deg, #805ad5, #4299e1);
+  box-shadow: 0 4px 14px rgba(128,90,213,0.4);
+}
+@keyframes planoCarlaGlow {
+  0%, 100% { box-shadow: 0 0 18px rgba(128,90,213,0.25); }
+  50%      { box-shadow: 0 0 32px rgba(66,153,225,0.45); }
+}
+@keyframes planoCarlaBorder {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 300% 50%; }
+}
+
+/* Botão pro canal do YouTube (aba Solicitar Acesso) — chama o cliente a ver as
+   funcionalidades em vídeo. */
+.youtube-cta-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 18px;
+  padding: 12px 20px;
+  border-radius: 12px;
+  background: #ff0000;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  text-decoration: none;
+  box-shadow: 0 6px 20px rgba(255,0,0,0.28);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.youtube-cta-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 26px rgba(255,0,0,0.4);
+}
+.youtube-cta-button:active { transform: scale(0.98); }
+
+/* ===== Gerenciamento de Clientes (AdminUsersPage) ===== */
+@media (max-width: 640px) {
+  .admin-users-page { padding: 12px !important; }
+  .admin-users-panel { padding: 16px !important; }
+}
+.admin-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+.admin-stat-card {
+  border-radius: 14px;
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #1a202c;
+  border: 1px solid #2d3748;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.admin-stat-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+}
+.admin-stat-info { min-width: 0; }
+.admin-stat-label {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #a0aec0;
+  display: block;
+  font-weight: 600;
+}
+.admin-stat-value { font-size: 23px; font-weight: 800; margin: 6px 0 0; line-height: 1.1; color: #fff; }
+.admin-stat-sub { font-size: 11.5px; opacity: 0.9; display: block; margin-top: 3px; }
+.admin-stat-icon {
+  background: rgba(255, 255, 255, 0.14);
+  padding: 10px;
+  border-radius: 10px;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+@media (max-width: 700px) {
+  .admin-stats-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .admin-stat-card { padding: 14px; }
+  .admin-stat-value { font-size: 18px; }
+  .admin-stat-icon { display: none; }
+}
+@media (max-width: 400px) {
+  .admin-stats-grid { grid-template-columns: 1fr; }
+}
+
+/* Lista de clientes em cards (cada cliente = 1 card, em qualquer tela) */
+.admin-users-list { display: flex; flex-direction: column; gap: 14px; }
+.admin-users-empty {
+  padding: 40px;
+  text-align: center;
+  color: #718096;
+  background: #0f1420;
+  border: 1px solid #1f293d;
+  border-radius: 12px;
+}
+.admin-user-card {
+  background: #141b2b;
+  border: 1px solid #24304f;
+  border-radius: 14px;
+  padding: 18px 20px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.admin-user-card:hover {
+  border-color: #3a4a72;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.32);
+}
+.admin-user-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.admin-user-identity { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 240px; }
+.admin-user-name { font-weight: 700; color: #f7fafc; font-size: 15px; }
+.admin-user-email { color: #8492a6; font-size: 13px; word-break: break-all; }
+.admin-user-device { color: #a9b6cc; font-size: 11px; margin-top: 4px; word-break: break-all; line-height: 1.4; }
+.admin-user-badges { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
+.admin-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.admin-user-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 14px 20px;
+  margin: 16px 0;
+  padding: 16px 0;
+  border-top: 1px solid #1f293d;
+  border-bottom: 1px solid #1f293d;
+}
+.admin-meta-item { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.admin-meta-item span {
+  font-size: 10.5px;
+  color: #718096;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 700;
+}
+.admin-meta-item strong { font-size: 13.5px; color: #e2e8f0; font-weight: 600; }
+.admin-own-account { color: #718096; font-size: 13px; font-style: italic; }
+@media (max-width: 640px) {
+  .admin-user-card { padding: 14px; }
+  .admin-user-card-top { flex-direction: column; }
+  .admin-user-badges { justify-content: flex-start; }
+  .admin-user-meta { grid-template-columns: repeat(2, 1fr); gap: 12px 14px; }
+}
+@media (max-width: 380px) {
+  .admin-user-meta { grid-template-columns: 1fr; }
+}
+
+/* Botão do YouTube no topo (cliente sem acesso) — leva direto pro canal. */
+.topbar-youtube-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 10px;
+  background: #ff0000;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(255,0,0,0.3);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  animation: youtubeCtaPulse 2.4s ease-in-out infinite;
+}
+.topbar-youtube-btn:hover { transform: translateY(-1px) scale(1.02); }
+.topbar-youtube-btn:active { transform: scale(0.98); }
+@keyframes youtubeCtaPulse {
+  0%, 100% { box-shadow: 0 4px 14px rgba(255,0,0,0.30); }
+  50%      { box-shadow: 0 4px 22px rgba(255,0,0,0.55); }
+}
+/* No celular esconde só o texto, mantém o ícone do YouTube. */
+@media (max-width: 640px) {
+  .topbar-youtube-btn span { display: none; }
+  .topbar-youtube-btn { padding: 0 12px; }
+}

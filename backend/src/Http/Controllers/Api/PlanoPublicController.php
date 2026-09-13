@@ -32,6 +32,7 @@ final class PlanoPublicController
                 'abas' => $plano['abas'],
                 'show_in_ranking' => $plano['show_in_ranking'] ?? false,
                 'sales_override_count' => $plano['sales_override_count'] ?? 0,
+                'carla_ia' => $plano['carla_ia'] ?? false,
             ],
             $this->planos->listAll(false)
         );

@@ -49,6 +49,54 @@ final class WebPushService
              WHERE u.role = 'admin'"
         )->fetchAll();
 
+        return $this->deliver($subs, $notif);
+    }
+
+    /**
+     * Envia a notificacao pra todos os dispositivos dos USUARIOS (role='user').
+     * Se `$emails` for passado, restringe aos donos desses e-mails — casa com o
+     * "enviar pra selecionados" do comunicado. Nunca lanca.
+     *
+     * @param array{title:string, body:string, data?:array<string,mixed>} $notif
+     * @param array<int,string>|null $emails
+     * @return array{sent:int, failed:int, total:int}
+     */
+    public function sendToUsers(array $notif, ?array $emails = null): array
+    {
+        if (is_array($emails)) {
+            $emails = array_values(array_filter(array_map('strval', $emails), static fn ($e) => $e !== ''));
+            if ($emails === []) {
+                return ['sent' => 0, 'failed' => 0, 'total' => 0];
+            }
+            $placeholders = implode(',', array_fill(0, count($emails), '?'));
+            $stmt = Db::connection()->prepare(
+                "SELECT ps.* FROM push_subscriptions ps
+                 JOIN users u ON u.id = ps.user_id
+                 WHERE u.role = 'user' AND u.email IN ($placeholders)"
+            );
+            $stmt->execute($emails);
+            $subs = $stmt->fetchAll();
+        } else {
+            $subs = Db::connection()->query(
+                "SELECT ps.* FROM push_subscriptions ps
+                 JOIN users u ON u.id = ps.user_id
+                 WHERE u.role = 'user'"
+            )->fetchAll();
+        }
+
+        return $this->deliver($subs, $notif);
+    }
+
+    /**
+     * Loop de envio comum: cifra e faz o POST pra cada subscription. Remove as
+     * mortas (404/410) e nunca lanca.
+     *
+     * @param array<int,array<string,mixed>> $subs
+     * @param array{title:string, body:string, data?:array<string,mixed>} $notif
+     * @return array{sent:int, failed:int, total:int}
+     */
+    private function deliver(array $subs, array $notif): array
+    {
         $json = json_encode([
             'title' => $notif['title'] ?? 'Notificação',
             'body' => $notif['body'] ?? '',

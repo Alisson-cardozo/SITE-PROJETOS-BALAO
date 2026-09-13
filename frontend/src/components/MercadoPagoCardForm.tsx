@@ -20,6 +20,18 @@ interface MercadoPagoCardFormProps {
   /** Valor do plano em reais (ex.: 110.0). */
   valor: number;
   authToken: string;
+  /** Código do cupom aplicado (opcional) — o backend recalcula o desconto. */
+  codigoCupom?: string | null;
+  /** Se passado, substitui o fluxo padrão (plano): o pai faz a cobrança com os
+   * dados do cartão já tokenizados. Usado na solicitação de molde. */
+  onCharge?: (card: {
+    token: string;
+    payment_method_id: string;
+    installments: number;
+    issuer_id: number | null;
+    device_id: string | null;
+    identification: { type: string; number: string };
+  }) => Promise<void>;
   onSuccess: (pagamento: Pagamento, user: CardUser | null) => void;
   onCancel: () => void;
 }
@@ -107,6 +119,8 @@ export function MercadoPagoCardForm({
   planoId,
   valor,
   authToken,
+  codigoCupom,
+  onCharge,
   onSuccess,
   onCancel,
 }: MercadoPagoCardFormProps) {
@@ -127,6 +141,10 @@ export function MercadoPagoCardForm({
   useEffect(() => {
     onSuccessRef.current = onSuccess;
   }, [onSuccess]);
+  const onChargeRef = useRef(onCharge);
+  useEffect(() => {
+    onChargeRef.current = onCharge;
+  }, [onCharge]);
 
   const amountTooLow = valor < MIN_CARD_AMOUNT;
 
@@ -254,6 +272,19 @@ export function MercadoPagoCardForm({
         throw new Error('Não foi possível validar o cartão. Confira os dados e tente novamente.');
       }
 
+      // Fluxo alternativo (solicitação de molde): o pai faz a cobrança.
+      if (onChargeRef.current) {
+        await onChargeRef.current({
+          token: token.id,
+          payment_method_id: paymentMethodId,
+          installments: selectedInstallments,
+          issuer_id: issuerId,
+          device_id: deviceId || null,
+          identification: { type: 'CPF', number: cpfDigits },
+        });
+        return;
+      }
+
       const response = await api.createPagamentoCartao(
         {
           plano_id: planoId,
@@ -263,6 +294,7 @@ export function MercadoPagoCardForm({
           issuer_id: issuerId,
           device_id: deviceId || null,
           identification: { type: 'CPF', number: cpfDigits },
+          codigo_cupom: codigoCupom ?? null,
         },
         authToken
       );

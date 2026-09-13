@@ -1254,6 +1254,91 @@ function splitProfileIntoBands(points: THREE.Vector2[], n: number): (THREE.Vecto
   return bands;
 }
 
+/** WebCodecs disponivel? (grava MP4/H.264 de verdade, abre em qualquer aparelho). */
+function hasWebCodecs(): boolean {
+  const w = window as unknown as { VideoEncoder?: unknown; VideoFrame?: unknown };
+  return typeof w.VideoEncoder === 'function' && typeof w.VideoFrame === 'function';
+}
+
+/**
+ * Grava o canvas num MP4/H.264 com o "moov" no inicio (faststart) — esse e o
+ * formato que abre em iPhone, Android, WhatsApp e Windows sem problema. Usa
+ * WebCodecs (VideoEncoder) + mp4-muxer, ao inves do MediaRecorder (que muitas
+ * vezes so grava WebM ou um MP4 fragmentado que trava no celular).
+ */
+async function recordCanvasToMp4(
+  canvas: HTMLCanvasElement,
+  durationSec: number,
+  fps: number,
+  onSecond: (secondsLeft: number) => void
+): Promise<Blob> {
+  // Mediabunny: gera um MP4/H.264 com "moov" no inicio (faststart) e timestamps
+  // regulares baseados no numero do frame — abre em iPhone, Android, WhatsApp e
+  // Windows sem "arquivo corrompido". Substitui o mp4-muxer (deprecado).
+  const { Output, Mp4OutputFormat, BufferTarget, CanvasSource } = await import('mediabunny');
+
+  // Limita a 1280px no lado maior (H.264 baseline = toca em QUALQUER aparelho,
+  // inclusive iPhone velho e WhatsApp). Dimensoes sempre PARES.
+  const srcW = canvas.width || 1;
+  const srcH = canvas.height || 1;
+  const maxDim = 1280;
+  const scale = Math.min(1, maxDim / Math.max(srcW, srcH));
+  const w = Math.max(2, Math.round((srcW * scale) / 2) * 2);
+  const h = Math.max(2, Math.round((srcH * scale) / 2) * 2);
+
+  // Canvas auxiliar: desenha o 3D reduzido antes de codificar (downscale).
+  const scratch = document.createElement('canvas');
+  scratch.width = w;
+  scratch.height = h;
+  const sctx = scratch.getContext('2d', { alpha: false });
+
+  const target = new BufferTarget();
+  const output = new Output({
+    format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
+    target,
+  });
+  const source = new CanvasSource(scratch, {
+    codec: 'avc', // H.264 — o formato mais compativel que existe
+    bitrate: 5_000_000,
+    keyFrameInterval: 2,
+  });
+  output.addVideoTrack(source);
+  await output.start();
+
+  // Codifica um numero fixo de frames com timestamps REGULARES (i/fps). Isso
+  // garante um video valido mesmo que a renderizacao real oscile de FPS.
+  const totalFrames = Math.max(1, Math.round(durationSec * fps));
+  const frameDur = 1 / fps;
+  const startT = performance.now();
+  let lastSecond = -1;
+
+  for (let i = 0; i < totalFrames; i++) {
+    // Ritmo em tempo real: espera ate o instante do frame antes de captura-lo,
+    // pra animacao girar na velocidade certa (sem acelerar/travar).
+    const targetMs = startT + i * frameDur * 1000;
+    let waitMs = targetMs - performance.now();
+    while (waitMs > 0) {
+      await new Promise<void>((r) => setTimeout(r, Math.min(waitMs, 16)));
+      waitMs = targetMs - performance.now();
+    }
+
+    const left = Math.max(0, Math.ceil(durationSec - i * frameDur));
+    if (left !== lastSecond) {
+      lastSecond = left;
+      onSecond(left);
+    }
+
+    // desenha o 3D reduzido no canvas auxiliar e codifica esse frame
+    sctx?.drawImage(canvas, 0, 0, w, h);
+    await source.add(i * frameDur, frameDur);
+  }
+
+  await output.finalize();
+  const buffer = target.buffer;
+  if (!buffer) throw new Error('MP4 vazio');
+  return new Blob([buffer], { type: 'video/mp4' });
+}
+
 export function Modelo3DWorkspace() {
   const { token } = useAuth();
 
@@ -1346,6 +1431,9 @@ export function Modelo3DWorkspace() {
   // Video recording states
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSecondsLeft, setRecordingSecondsLeft] = useState(10);
+  // Video gravado, guardado pra ser entregue por um TOQUE fresco do usuario
+  // (necessario pro navigator.share funcionar no celular).
+  const [recordedVideo, setRecordedVideo] = useState<{ blob: Blob; ext: string; name: string } | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -2456,6 +2544,41 @@ export function Modelo3DWorkspace() {
     if (!renderer || isRecording) return;
 
     const canvas = renderer.domElement;
+
+    const currentMold = allModels.find((m) => m.key === selectedMoldKey);
+    const filename = currentMold ? currentMold.name.replace(/\s+/g, '-').toLowerCase() : 'modelo-3d';
+
+    // Nao entrega o arquivo direto: guarda o video pronto e mostra o botao
+    // "Salvar / Enviar video". No celular o salvamento SO funciona por um toque
+    // fresco do usuario (Web Share), por isso a entrega vira uma segunda etapa.
+    const stashVideo = (blob: Blob, ext: string) => {
+      setRecordedVideo({ blob, ext, name: `video-${filename}.${ext}` });
+    };
+
+    // CAMINHO PRINCIPAL: MP4/H.264 de verdade (faststart) via WebCodecs — abre
+    // em iPhone, Android, WhatsApp e Windows. So cai no MediaRecorder abaixo se
+    // o navegador nao tiver WebCodecs.
+    if (hasWebCodecs()) {
+      setRecordedVideo(null);
+      setIsRecording(true);
+      setRecordingSecondsLeft(10);
+      recordCanvasToMp4(canvas, 10, 30, (left) => setRecordingSecondsLeft(left))
+        .then((blob) => {
+          stashVideo(blob, 'mp4');
+          setIsRecording(false);
+        })
+        .catch((err) => {
+          console.error('Falha no MP4 (WebCodecs), tentando MediaRecorder:', err);
+          setIsRecording(false);
+          startMediaRecorder();
+        });
+      return;
+    }
+
+    setRecordedVideo(null);
+    startMediaRecorder();
+
+    function startMediaRecorder() {
     let stream: MediaStream;
     try {
       stream = (canvas as any).captureStream ? (canvas as any).captureStream(30) : (canvas as any).mozCaptureStream(30);
@@ -2499,18 +2622,7 @@ export function Modelo3DWorkspace() {
     recorder.onstop = () => {
       const extension = selectedType.includes('mp4') ? 'mp4' : 'webm';
       const blob = new Blob(chunks, { type: selectedType || 'video/webm' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-
-      const currentMold = allModels.find((m) => m.key === selectedMoldKey);
-      const filename = currentMold ? currentMold.name.replace(/\s+/g, '-').toLowerCase() : 'modelo-3d';
-
-      link.download = `video-${filename}.${extension}`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      stashVideo(blob, extension);
       setIsRecording(false);
     };
 
@@ -2530,7 +2642,44 @@ export function Modelo3DWorkspace() {
         return prev - 1;
       });
     }, 1000);
+    }
   }, [allModels, selectedMoldKey, isRecording]);
+
+  // Entrega o video gravado NO TOQUE do usuario: no celular abre a folha de
+  // compartilhamento nativa (salvar na galeria/arquivos ou mandar no WhatsApp);
+  // no PC (ou se o share nao existir) baixa o arquivo direto.
+  const deliverRecordedVideo = useCallback(async () => {
+    if (!recordedVideo) return;
+    const { blob, name } = recordedVideo;
+
+    const file = new File([blob], name, { type: blob.type || 'video/mp4' });
+    const nav = navigator as Navigator & {
+      canShare?: (data?: unknown) => boolean;
+      share?: (data?: unknown) => Promise<void>;
+    };
+
+    // Celular: compartilhamento nativo (WhatsApp, salvar em Fotos/Arquivos).
+    if (nav.share && nav.canShare && nav.canShare({ files: [file] })) {
+      try {
+        await nav.share({ files: [file], title: name });
+        return;
+      } catch (err) {
+        // Usuario cancelou o compartilhamento — nao faz nada.
+        if ((err as { name?: string })?.name === 'AbortError') return;
+        // Qualquer outro erro: cai pro download tradicional abaixo.
+      }
+    }
+
+    // PC (ou navegador sem Web Share): baixa o arquivo direto.
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [recordedVideo]);
 
   const handleSelectMold = useCallback((key: string) => {
     setSelectedMoldKey(key);
@@ -2944,9 +3093,29 @@ export function Modelo3DWorkspace() {
                   disabled={!selectedMoldKey || webglError || isRecording}
                 >
                   <Film size={16} />
-                  {isRecording ? `Gravando (${recordingSecondsLeft}s)` : 'Baixar Vídeo (10s)'}
+                  {isRecording ? `Gravando (${recordingSecondsLeft}s)` : 'Gravar Vídeo (10s)'}
                 </button>
               </div>
+
+              {recordedVideo && !isRecording && (
+                <div className="modelo3d-export-btns-row">
+                  <button
+                    type="button"
+                    className="mold-primary-button"
+                    onClick={deliverRecordedVideo}
+                    style={{ width: '100%' }}
+                  >
+                    <Download size={16} />
+                    Salvar / Enviar vídeo
+                  </button>
+                </div>
+              )}
+              {recordedVideo && !isRecording && (
+                <p className="bandeira-size-hint">
+                  Vídeo pronto! No celular, toque acima pra <strong>salvar na galeria</strong> ou
+                  <strong> enviar direto no WhatsApp</strong>. No PC, o arquivo baixa na hora.
+                </p>
+              )}
             </div>
           ) : null}
         </div>

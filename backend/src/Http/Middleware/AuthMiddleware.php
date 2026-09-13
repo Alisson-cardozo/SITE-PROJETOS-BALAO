@@ -39,9 +39,10 @@ final class AuthMiddleware
         if ($row['status'] === 'blocked') {
             return Response::json(['error' => 'Este acesso esta bloqueado. Fale com o administrador.'], 403);
         }
-        if ($row['status'] === 'active' && $row['access_expires_at'] !== null && strtotime((string) $row['access_expires_at']) < time()) {
-            return Response::json(['error' => 'Seu acesso expirou. Fale com o administrador.'], 403);
-        }
+        // Nota: se a conta expirou (access_expires_at < time()), permite autenticar
+        // no AuthMiddleware para conseguir acessar a tela de renovacao/pagamento.
+        // O acesso as ferramentas pagas e bloqueado pelo PaidAccessMiddleware.
+
 
         $pdo->prepare('UPDATE users SET last_activity = NOW() WHERE id = :id')
             ->execute(['id' => $row['id']]);

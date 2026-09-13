@@ -5,6 +5,14 @@ CREATE TABLE IF NOT EXISTS users (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   name VARCHAR(120) NOT NULL,
   email VARCHAR(180) NOT NULL,
+  -- Verificacao de e-mail por codigo de 6 digitos. NULL = ainda nao validou.
+  -- Admin sempre nasce/fica validado (nunca pede codigo). O codigo e o prazo
+  -- (email_verification_deadline) so sao setados quando o usuario ENTRA no
+  -- sistema pela 1a vez sem estar validado. Passado o prazo (1h) sem validar,
+  -- a conta e excluida (ver UserService deleteExpiredUnverified + cron).
+  email_verified_at DATETIME NULL,
+  email_verification_code VARCHAR(6) NULL,
+  email_verification_deadline DATETIME NULL,
   password_hash VARCHAR(255) NOT NULL,
   role ENUM('admin', 'user') NOT NULL DEFAULT 'user',
   -- pending_payment: cadastro novo que ainda nao pagou nenhum plano -- login
@@ -379,6 +387,8 @@ CREATE TABLE IF NOT EXISTS system_settings (
   telegram VARCHAR(255) NULL,
   instagram VARCHAR(255) NULL,
   whatsapp VARCHAR(255) NULL,
+  -- Link do canal do YouTube (mostrado pros clientes verem as funcionalidades).
+  youtube VARCHAR(255) NULL,
   hidden_nav_items_json TEXT NULL,
   -- Rotulo opcional pra mostrar no lugar de uma aba ESCONDIDA na lista de
   -- abas de cada plano (tela "Solicitar Acesso" e checklist do admin em
@@ -439,6 +449,9 @@ CREATE TABLE IF NOT EXISTS planos (
   -- libera TODAS as abas -- planos criados antes dessa coluna existir
   -- continuam liberando tudo, sem quebrar quem ja paga (ver PlanoService).
   abas_json TEXT NULL,
+  -- Assistente-IA Carla (chat que monta o molde) disponivel neste plano? E um
+  -- recurso a parte: mesmo com acesso ao plotter de tacos, so aparece se ligado.
+  carla_ia TINYINT(1) NOT NULL DEFAULT 0,
   created_by BIGINT UNSIGNED NOT NULL,
   updated_by BIGINT UNSIGNED NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -594,4 +607,86 @@ CREATE TABLE IF NOT EXISTS lanterna_projects (
   KEY idx_lanterna_projects_updated_at (updated_at),
   CONSTRAINT fk_lanterna_projects_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT fk_lanterna_projects_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Cupons de desconto. `percentual` (0-100) e aplicado sobre o valor do plano no
+-- checkout. `valido_ate` NULL = sem validade. `is_campanha`=1 marca o cupom
+-- usado no reengajamento diario (so um deve ficar marcado). Cada cupom pode ser
+-- usado 1x por usuario POR MES (ver cupom_usos).
+CREATE TABLE IF NOT EXISTS cupons (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  codigo VARCHAR(40) NOT NULL,
+  nome VARCHAR(120) NOT NULL,
+  percentual DECIMAL(5, 2) NOT NULL,
+  valido_ate DATE NULL,
+  ativo TINYINT(1) NOT NULL DEFAULT 1,
+  is_campanha TINYINT(1) NOT NULL DEFAULT 0,
+  -- Limite total de usos do cupom (NULL = ilimitado). Quando o total de linhas
+  -- em cupom_usos atinge esse numero, o cupom fica esgotado.
+  max_usos INT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_cupons_codigo (codigo),
+  KEY idx_cupons_campanha (is_campanha)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Solicitacoes de molde taqueado sob encomenda (pagina publica, sem login). O
+-- cliente escolhe um molde existente (mold_id da a curva/silhueta), informa
+-- tamanho/gomos/bainha e paga por metro. public_token deixa o navegador
+-- consultar o status sem login. chave_unica (gerada quando paga) e enviada por
+-- e-mail e serve pra retomar o pedido pago. taco_config_json guarda o
+-- assistente de tacos (fase 2). status vai de aguardando_pagamento a entregue.
+CREATE TABLE IF NOT EXISTS solicitacoes_molde (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  mold_id BIGINT UNSIGNED NULL,
+  modelo_key VARCHAR(150) NULL,
+  categoria VARCHAR(60) NULL,
+  modelo_nome VARCHAR(180) NOT NULL,
+  tamanho_cm DECIMAL(10, 2) NOT NULL,
+  gomos INT UNSIGNED NOT NULL,
+  bainha_cm DECIMAL(10, 2) NOT NULL,
+  valor DECIMAL(10, 2) NOT NULL,
+  email VARCHAR(180) NOT NULL,
+  status ENUM('aguardando_pagamento', 'pago', 'entregue') NOT NULL DEFAULT 'aguardando_pagamento',
+  chave_unica VARCHAR(40) NULL,
+  public_token VARCHAR(64) NOT NULL,
+  taco_config_json MEDIUMTEXT NULL,
+  mp_payment_id VARCHAR(64) NULL,
+  qr_code TEXT NULL,
+  qr_code_base64 MEDIUMTEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  paid_at TIMESTAMP NULL,
+  entregue_at TIMESTAMP NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_solicitacoes_chave (chave_unica),
+  KEY idx_solicitacoes_status (status),
+  KEY idx_solicitacoes_token (public_token)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Planos em que o cupom vale, com % proprio por plano. SE um cupom nao tem
+-- nenhuma linha aqui, ele vale pra TODOS os planos usando cupons.percentual.
+-- SE tem linhas, vale SO pros planos listados, cada um com o seu percentual.
+CREATE TABLE IF NOT EXISTS cupom_planos (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  cupom_id BIGINT UNSIGNED NOT NULL,
+  plano_id BIGINT UNSIGNED NOT NULL,
+  percentual DECIMAL(5, 2) NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_cupom_plano (cupom_id, plano_id),
+  KEY idx_cupom_planos_cupom (cupom_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Registro de uso: garante 1 uso por cupom por usuario por mes (coluna `ym` =
+-- 'YYYY-MM'). Gravado quando o pagamento com o cupom e APROVADO.
+CREATE TABLE IF NOT EXISTS cupom_usos (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  cupom_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  ym CHAR(7) NOT NULL,
+  pagamento_id BIGINT UNSIGNED NULL,
+  used_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_cupom_uso_mes (cupom_id, user_id, ym),
+  KEY idx_cupom_usos_user (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

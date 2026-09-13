@@ -30,6 +30,9 @@ export interface PainelPdfOptions {
   divisionGridColor: string;
   divisionCols: number;
   divisionRows: number;
+  /** Desenha o numero de cada cor em cima das celulas (aba Numerar). Quando
+   * false, o desenho sai limpo, sem numeros. */
+  showNumbers: boolean;
 }
 
 const INFO_WIDTH_CM = 19;
@@ -211,7 +214,9 @@ function addPainelPage(doc: jsPDF, options: PainelPdfOptions, region: PixelRegio
   if (options.showDivisionGrid && options.divisionCols > 0 && options.divisionRows > 0) {
     drawDivisionGridOverlay(doc, region, options.divisionCols, options.divisionRows, options.divisionGridColor, cellCm, originX, originY);
   }
-  drawCellNumbers(doc, options.colors, options.gridWidth, region, colorNumberMap, cellCm, originX, originY);
+  if (options.showNumbers) {
+    drawCellNumbers(doc, options.colors, options.gridWidth, region, colorNumberMap, cellCm, originX, originY);
+  }
 }
 
 /** Desenha o cabecalho + stats + tabela de cores (numerada, sem preto) na

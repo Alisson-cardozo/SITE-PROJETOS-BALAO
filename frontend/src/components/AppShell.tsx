@@ -97,6 +97,10 @@ export function AppShell({ user, navGroups, activeId, onSelect, onLogout, social
   const showTutorialButton = activeTutorial && activeTutorial.show && !!activeTutorial.video_url;
   const embedUrl = showTutorialButton ? getYoutubeEmbedUrl(activeTutorial.video_url) : null;
 
+  // Cliente SEM acesso pago vê um botão do YouTube no topo, que leva direto pro
+  // canal (admin configura o link em Redes Sociais) — pra ver as funcionalidades.
+  const youtubeCta = user && !hasPaidAccess(user) && socialLinks?.youtube ? socialLinks.youtube : null;
+
   const activeItem = navGroups
     .flatMap((g) => g.flatMap((item) => (item.children?.length ? item.children : [item])))
     .find((item) => item.id === activeId);
@@ -173,6 +177,20 @@ export function AppShell({ user, navGroups, activeId, onSelect, onLogout, social
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {youtubeCta && (
+            <a
+              href={youtubeCta}
+              target="_blank"
+              rel="noreferrer"
+              className="topbar-youtube-btn"
+              title="Veja as funcionalidades no nosso canal do YouTube"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8zM9.5 15.5v-7l6.5 3.5-6.5 3.5z" />
+              </svg>
+              <span>Ver funcionalidades</span>
+            </a>
+          )}
           {showTutorialButton && embedUrl && !tutorialOpen && (
             <button
               type="button"

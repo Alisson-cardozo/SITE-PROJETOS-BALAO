@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Core\Request;
 use App\Core\Response;
+use App\Services\CupomService;
 use App\Services\PagamentoService;
 use App\Services\PlanoService;
 use App\Services\UserService;
@@ -16,12 +17,36 @@ final class PagamentoController
     private PagamentoService $pagamentos;
     private PlanoService $planos;
     private UserService $users;
+    private CupomService $cupons;
 
     public function __construct()
     {
         $this->pagamentos = new PagamentoService();
         $this->planos = new PlanoService();
         $this->users = new UserService();
+        $this->cupons = new CupomService();
+    }
+
+    /**
+     * Resolve o cupom (opcional) enviado no pagamento: valida pro usuario/plano
+     * e devolve [valorFinal, cupomId]. Se nao houver cupom, devolve o valor cheio.
+     * Retorna Response (422) se o cupom foi informado mas e invalido.
+     *
+     * @return array{0: float, 1: ?int}|Response
+     */
+    private function resolveCupom(Request $request, int $userId, int $planoId, float $valorPlano): array|Response
+    {
+        $codigo = trim((string) ($request->input('codigo_cupom') ?? ''));
+        if ($codigo === '') {
+            return [$valorPlano, null];
+        }
+
+        $result = $this->cupons->validateForUser($codigo, $userId, $planoId, $valorPlano);
+        if (!$result['ok']) {
+            return Response::json(['error' => $result['error']], 422);
+        }
+
+        return [(float) $result['valor_final'], (int) $result['cupom']['id']];
     }
 
     public function store(Request $request): Response
@@ -38,6 +63,12 @@ final class PagamentoController
             return Response::json(['error' => 'Plano nao encontrado ou indisponivel.'], 422);
         }
 
+        $cupom = $this->resolveCupom($request, $userId, (int) $plano['id'], (float) $plano['valor']);
+        if ($cupom instanceof Response) {
+            return $cupom;
+        }
+        [$valorFinal, $cupomId] = $cupom;
+
         $notificationUrl = $this->notificationUrl($request);
 
         try {
@@ -47,10 +78,11 @@ final class PagamentoController
                 [
                     'id' => (int) $plano['id'],
                     'nome' => (string) $plano['nome'],
-                    'valor' => (float) $plano['valor'],
+                    'valor' => $valorFinal,
                     'dias_acesso' => (int) $plano['dias_acesso'],
                 ],
-                $notificationUrl
+                $notificationUrl,
+                $cupomId
             );
         } catch (Throwable $e) {
             return Response::json(['error' => $e->getMessage()], 502);
@@ -102,6 +134,12 @@ final class PagamentoController
             }
         }
 
+        $cupom = $this->resolveCupom($request, $userId, (int) $plano['id'], (float) $plano['valor']);
+        if ($cupom instanceof Response) {
+            return $cupom;
+        }
+        [$valorFinal, $cupomId] = $cupom;
+
         $notificationUrl = $this->notificationUrl($request);
 
         try {
@@ -111,7 +149,7 @@ final class PagamentoController
                 [
                     'id' => (int) $plano['id'],
                     'nome' => (string) $plano['nome'],
-                    'valor' => (float) $plano['valor'],
+                    'valor' => $valorFinal,
                     'dias_acesso' => (int) $plano['dias_acesso'],
                 ],
                 $notificationUrl,
@@ -122,7 +160,8 @@ final class PagamentoController
                     'issuer_id' => $issuerId,
                     'device_id' => $deviceId,
                     'identification' => $identification,
-                ]
+                ],
+                $cupomId
             );
         } catch (Throwable $e) {
             return Response::json(['error' => $e->getMessage()], 502);

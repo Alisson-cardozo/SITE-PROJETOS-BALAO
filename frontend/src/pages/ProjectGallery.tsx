@@ -7,6 +7,7 @@ import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { computeSectionTacoTotals, SECTION_COLORS, SECTION_LABELS, SECTION_ORDER } from '../lib/moldGeometry';
 import { buildMoldPdf } from '../lib/moldPdf';
+import { buildMoldTiledPdf } from '../lib/moldTiledPdf';
 import { downloadBlob, slugifyFilename } from '../lib/pdfExport';
 import type { MoldProjectSummary } from '../types';
 
@@ -85,6 +86,24 @@ export function ProjectGallery({ onModify, showModify = true }: ProjectGalleryPr
       setError(err instanceof ApiError ? err.message : 'Nao foi possivel excluir o projeto.');
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  function handleDownloadTiledPdf(project: MoldProjectSummary, paper: 'a4' | 'a3') {
+    try {
+      const blob = buildMoldTiledPdf(
+        {
+          nome: project.nome,
+          modelo: project.modelo,
+          bainhaCm: project.bainha_cm,
+          pontos: project.pontos,
+          plotterConfig: project.plotter_config,
+        },
+        paper
+      );
+      downloadBlob(blob, `${slugifyFilename(project.display_nome)}-${paper}.pdf`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Nao foi possivel gerar o PDF fatiado (${paper.toUpperCase()}).`);
     }
   }
 
@@ -194,6 +213,26 @@ export function ProjectGallery({ onModify, showModify = true }: ProjectGalleryPr
                       <FileDown size={15} />
                     )}
                     Baixar em PDF
+                  </button>
+
+                  <button
+                    type="button"
+                    className="mold-card-btn pdf"
+                    onClick={() => handleDownloadTiledPdf(project, 'a4')}
+                    title="PDF fatiado em folhas A4, numeradas, pra montar sem plotter"
+                  >
+                    <FileDown size={15} />
+                    PDF em folhas A4
+                  </button>
+
+                  <button
+                    type="button"
+                    className="mold-card-btn pdf"
+                    onClick={() => handleDownloadTiledPdf(project, 'a3')}
+                    title="PDF fatiado em folhas A3, numeradas, pra montar sem plotter"
+                  >
+                    <FileDown size={15} />
+                    PDF em folhas A3
                   </button>
 
                   <button

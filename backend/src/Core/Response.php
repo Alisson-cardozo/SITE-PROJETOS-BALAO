@@ -20,6 +20,10 @@ final class Response
 
         return new self($status, $encoded === false ? '{}' : $encoded, [
             'Content-Type' => 'application/json; charset=utf-8',
+            // A API e toda dinamica (status de conexao, saldo, etc). Sem isso o
+            // navegador pode servir uma resposta antiga do cache em vez de bater
+            // no servidor de novo — foi o que deixava o QR do WhatsApp "travado".
+            'Cache-Control' => 'no-store, no-cache, must-revalidate',
         ]);
     }
 

@@ -362,7 +362,8 @@ export function getBandsForDevelopment(
     const secao = profile.secoes.find((s) => s.id === id);
     const cfg = tacoConfigs[id];
     if (secao && cfg) {
-      allBands.push(...expandSectionPartitions(secao, cfg));
+      // fillDeficit=true: planificacao final tem que sair completa.
+      allBands.push(...expandSectionPartitions(secao, cfg, true));
     }
   }
   

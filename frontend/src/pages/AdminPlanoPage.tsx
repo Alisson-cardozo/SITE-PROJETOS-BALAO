@@ -108,6 +108,7 @@ export function AdminPlanoPage() {
   const [formAbas, setFormAbas] = useState<Set<string>>(new Set(ALL_ABA_IDS));
   const [formShowInRanking, setFormShowInRanking] = useState(false);
   const [formSalesOverrideCount, setFormSalesOverrideCount] = useState(0);
+  const [formCarlaIa, setFormCarlaIa] = useState(false);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [savingPlano, setSavingPlano] = useState(false);
 
@@ -137,6 +138,7 @@ export function AdminPlanoPage() {
     setFormAbas(new Set(ALL_ABA_IDS));
     setFormShowInRanking(false);
     setFormSalesOverrideCount(0);
+    setFormCarlaIa(false);
     setFormErrors({});
     setShowForm(true);
   };
@@ -149,6 +151,7 @@ export function AdminPlanoPage() {
     setFormAbas(new Set(plano.abas));
     setFormShowInRanking(plano.show_in_ranking ?? false);
     setFormSalesOverrideCount(plano.sales_override_count ?? 0);
+    setFormCarlaIa(plano.carla_ia ?? false);
     setFormErrors({});
     setShowForm(true);
   };
@@ -191,6 +194,7 @@ export function AdminPlanoPage() {
         abas: [...formAbas],
         show_in_ranking: formShowInRanking,
         sales_override_count: formSalesOverrideCount,
+        carla_ia: formCarlaIa,
       };
       if (editingId !== null) {
         await api.adminUpdatePlano(editingId, payload, token);
@@ -431,6 +435,16 @@ export function AdminPlanoPage() {
                       style={{ width: 'auto', margin: 0 }}
                     />
                     <span>Mostrar no Ranking Público</span>
+                  </label>
+
+                  <label className="auth-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={formCarlaIa}
+                      onChange={(e) => setFormCarlaIa(e.target.checked)}
+                      style={{ width: 'auto', margin: 0 }}
+                    />
+                    <span>🤖 Assistente-IA Carla disponível</span>
                   </label>
 
                   <label className="auth-field">

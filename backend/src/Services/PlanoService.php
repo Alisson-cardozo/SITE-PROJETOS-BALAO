@@ -23,6 +23,7 @@ final class PlanoService
         'bandeiras',
         'painel-letreiros',
         '3d-fotos',
+        'reduzir-imagem',
         'profissionais',
         'acabamentos',
     ];
@@ -44,6 +45,23 @@ final class PlanoService
         $plano = $this->findRawById($planoId);
 
         return $plano === null ? null : $this->decodeAbas($plano['abas_json'] ?? null);
+    }
+
+    /**
+     * A Assistente-IA Carla esta disponivel pra quem tem o plano $planoId?
+     * planoId null (admin ou acesso manual) => true (sem restricao). Plano sem a
+     * coluna/flag => false (recurso e opt-in por plano).
+     */
+    public function carlaForPlanoId(?int $planoId): bool
+    {
+        if ($planoId === null) {
+            return true;
+        }
+        $plano = $this->findRawById($planoId);
+        if ($plano === null) {
+            return false;
+        }
+        return ((int) ($plano['carla_ia'] ?? 0)) === 1;
     }
 
     /** @return array<int,string>|null null = sem abas_json (plano legado / "todas") */
@@ -117,14 +135,15 @@ final class PlanoService
     public function create(array $data, int $userId): array
     {
         $stmt = Db::connection()->prepare(
-            'INSERT INTO planos (nome, valor, dias_acesso, abas_json, created_by, updated_by, show_in_ranking, sales_override_count)
-             VALUES (:nome, :valor, :dias_acesso, :abas_json, :created_by, :updated_by, :show_in_ranking, :sales_override_count)'
+            'INSERT INTO planos (nome, valor, dias_acesso, abas_json, carla_ia, created_by, updated_by, show_in_ranking, sales_override_count)
+             VALUES (:nome, :valor, :dias_acesso, :abas_json, :carla_ia, :created_by, :updated_by, :show_in_ranking, :sales_override_count)'
         );
         $stmt->execute([
             'nome' => $data['nome'],
             'valor' => $data['valor'],
             'dias_acesso' => $data['dias_acesso'],
             'abas_json' => $this->encodeAbas($data['abas']),
+            'carla_ia' => !empty($data['carla_ia']) ? 1 : 0,
             'created_by' => $userId,
             'updated_by' => $userId,
             'show_in_ranking' => $data['show_in_ranking'] ? 1 : 0,
@@ -143,7 +162,7 @@ final class PlanoService
     {
         $stmt = Db::connection()->prepare(
             'UPDATE planos SET nome = :nome, valor = :valor, dias_acesso = :dias_acesso,
-               abas_json = :abas_json, updated_by = :updated_by, show_in_ranking = :show_in_ranking,
+               abas_json = :abas_json, carla_ia = :carla_ia, updated_by = :updated_by, show_in_ranking = :show_in_ranking,
                sales_override_count = :sales_override_count
              WHERE id = :id'
         );
@@ -153,6 +172,7 @@ final class PlanoService
             'valor' => $data['valor'],
             'dias_acesso' => $data['dias_acesso'],
             'abas_json' => $this->encodeAbas($data['abas']),
+            'carla_ia' => !empty($data['carla_ia']) ? 1 : 0,
             'updated_by' => $userId,
             'show_in_ranking' => $data['show_in_ranking'] ? 1 : 0,
             'sales_override_count' => (int) $data['sales_override_count'],
@@ -197,6 +217,7 @@ final class PlanoService
             // ja resolvido pra lista completa -- ninguem precisa saber da
             // diferenca entre "null" e "todas explicitamente marcadas".
             'abas' => $this->decodeAbas($row['abas_json'] ?? null) ?? self::ALL_ABAS,
+            'carla_ia' => ((int) ($row['carla_ia'] ?? 0)) === 1,
             'created_by' => [
                 'id' => (int) $row['created_by'],
                 'name' => (string) ($row['created_by_name'] ?? ''),

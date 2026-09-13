@@ -9,6 +9,7 @@ import {
   Flag,
   FolderKanban,
   Hammer,
+  ImageDown,
   KeyRound,
   LayoutGrid,
   MonitorSmartphone,
@@ -23,6 +24,9 @@ import {
   Wallet,
   Wrench,
   Mail,
+  MessageCircle,
+  MessagesSquare,
+  Bot,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -84,6 +88,12 @@ export const mainNavItems: NavItem[] = [
     label: '3D e Fotos',
     icon: Box,
     description: 'Modelos 3D e fotos do seu trabalho.',
+  },
+  {
+    id: 'reduzir-imagem',
+    label: 'Reduzir Imagem HD',
+    icon: ImageDown,
+    description: 'Diminua o tamanho do arquivo de uma foto em alta resolução, ajustando largura e qualidade.',
   },
   {
     id: 'profissionais',
@@ -186,6 +196,18 @@ export const adminNavItems: NavItem[] = [
     description: 'Credenciais do Mercado Pago e os planos pagos (valor e dias de acesso).',
   },
   {
+    id: 'admin-cupons',
+    label: 'Cupons',
+    icon: Ticket,
+    description: 'Códigos de desconto e o cupom da campanha diária de reengajamento.',
+  },
+  {
+    id: 'admin-solicitacao-molde',
+    label: 'Molde sob Encomenda',
+    icon: Hammer,
+    description: 'Valor do metro, vídeo tutorial e moldes disponíveis para solicitação pública.',
+  },
+  {
     id: 'admin-notificacoes',
     label: 'Notificações',
     icon: Bell,
@@ -196,6 +218,24 @@ export const adminNavItems: NavItem[] = [
     label: 'Comunicação',
     icon: Mail,
     description: 'Envie avisos aos clientes por e-mail e pop-up na tela.',
+  },
+  {
+    id: 'admin-whatsapp',
+    label: 'WhatsApp',
+    icon: MessageCircle,
+    description: 'Conecte seu número pelo QR Code para enviar mensagens aos clientes.',
+  },
+  {
+    id: 'admin-whatsapp-mensagens',
+    label: 'Mensagens',
+    icon: MessagesSquare,
+    description: 'Converse com os clientes pelo WhatsApp em tempo real.',
+  },
+  {
+    id: 'admin-chatbot',
+    label: 'Chatbot',
+    icon: Bot,
+    description: 'Monte fluxos de atendimento automático pelo WhatsApp.',
   },
 ];
 
@@ -271,6 +311,12 @@ export const PLANO_ABA_GROUPS: PlanoAbaGroup[] = [
     description: 'Modelos 3D e fotos do trabalho.',
   },
   {
+    id: 'reduzir-imagem',
+    label: 'Reduzir Imagem HD',
+    icon: ImageDown,
+    description: 'Diminuir o tamanho do arquivo de fotos em alta resolucao.',
+  },
+  {
     id: 'profissionais',
     label: 'Rifas',
     icon: Ticket,
@@ -297,6 +343,7 @@ export const PLANO_ABA_GROUP_BY_NAV_ID: Record<string, string> = {
   bandeiras: 'bandeiras',
   'painel-letreiros': 'painel-letreiros',
   '3d-fotos': '3d-fotos',
+  'reduzir-imagem': 'reduzir-imagem',
   profissionais: 'profissionais',
   'acabamento-lanternagem-bojo': 'acabamentos',
   'acabamento-biscoito-golfier': 'acabamentos',

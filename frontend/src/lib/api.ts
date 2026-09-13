@@ -3,6 +3,13 @@ import type {
   BandeiraPayload,
   BandeiraSummary,
   Comunicado,
+  Cupom,
+  CupomPayload,
+  CupomValidacao,
+  SolicitacaoConfigPublic,
+  SolicitacaoPedido,
+  SolicitacaoChaveConsulta,
+  AdminSolicitacaoConfig,
   Notificacao,
   ImportedMoldData,
   LanternaProject,
@@ -33,6 +40,11 @@ import type {
   TutorialConfig,
   User,
   UserStatus,
+  WhatsAppConversation,
+  WhatsAppMessage,
+  ChatbotFlowSummary,
+  ChatbotFlowDetail,
+  ChatbotFlowGraph,
 } from '../types';
 
 const API_BASE = '/api';
@@ -65,6 +77,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
+    cache: 'no-store',
   });
 
   let data: unknown = null;
@@ -91,8 +104,31 @@ export const api = {
   changePassword: (payload: { current_password: string; new_password: string }, token: string) =>
     request<{ ok: boolean }>('/auth/password', { method: 'PUT', body: payload, token }),
   changeEmail: (payload: { current_password: string; new_email: string }, token: string) =>
-    request<{ user: User }>('/auth/email', { method: 'PUT', body: payload, token }),
+    request<{ ok: boolean; pending_email: string }>('/auth/email', { method: 'PUT', body: payload, token }),
+  confirmEmailChange: (code: string, token: string) =>
+    request<{ user: User }>('/auth/email/confirm', { method: 'POST', body: { code }, token }),
+  reportActivity: (view: string, token: string) =>
+    request<{ ok: boolean }>('/auth/activity', { method: 'POST', body: { view }, token }),
+  sendPhoneCode: (phone: string, token: string) =>
+    request<{ ok: boolean }>('/auth/phone/send', { method: 'POST', body: { phone }, token }),
+  confirmPhoneCode: (code: string, token: string) =>
+    request<{ user: User }>('/auth/phone/confirm', { method: 'POST', body: { code }, token }),
+  deleteAccount: (password: string, token: string) =>
+    request<{ ok: boolean }>('/auth/account', { method: 'DELETE', body: { password }, token }),
   logout: (token: string) => request<{ ok: boolean }>('/auth/logout', { method: 'POST', token }),
+  emailVerificationStatus: (token: string) =>
+    request<{ verified: boolean; email: string; deadline: string | null }>('/auth/email-verification', { token }),
+  emailVerificationSend: (token: string) =>
+    request<{ sent?: boolean; verified?: boolean; deadline?: string | null }>('/auth/email-verification/send', {
+      method: 'POST',
+      token,
+    }),
+  emailVerificationConfirm: (code: string, token: string) =>
+    request<{ verified: boolean; user: User }>('/auth/email-verification/confirm', {
+      method: 'POST',
+      body: { code },
+      token,
+    }),
   adminListUsers: (token: string) =>
     request<{
       data: User[];
@@ -103,10 +139,52 @@ export const api = {
         pending: number;
         blocked: number;
         monthly_billing: number;
+        molds_sold_total?: number;
+        molds_billing?: number;
+        total_billing?: number;
       };
     }>('/admin/users', { token }),
   adminUpdateUserStatus: (id: number, status: 'active' | 'blocked', token: string) =>
     request<{ data: User }>(`/admin/users/${id}/status`, { method: 'PUT', body: { status }, token }),
+  adminWhatsappStatus: (token: string) =>
+    request<{ data: { connected: boolean; qr: string | null; pairingCode?: string | null; initializing?: boolean; service_online: boolean; error?: string | null } }>('/admin/whatsapp/status', { token }),
+  adminWhatsappConnect: (token: string) =>
+    request<{ data: unknown }>('/admin/whatsapp/connect', { method: 'POST', token }),
+  adminWhatsappConnectWithCode: (phone: string, token: string) =>
+    request<{ data: { pairingCode?: string } }>('/admin/whatsapp/connect-with-code', { method: 'POST', body: { phone }, token }),
+  adminWhatsappDisconnect: (token: string) =>
+    request<{ data: unknown }>('/admin/whatsapp/disconnect', { method: 'POST', token }),
+  adminWhatsappConversations: (token: string) =>
+    request<{ data: WhatsAppConversation[] }>('/admin/whatsapp/conversations', { token }),
+  adminWhatsappMessages: (conversationId: number, token: string, before?: number) =>
+    request<{ data: WhatsAppMessage[] }>(`/admin/whatsapp/conversations/${conversationId}/messages${before ? `?before=${before}` : ''}`, { token }),
+  adminWhatsappSendMessage: (conversationId: number, body: string, token: string) =>
+    request<{ data: { message: WhatsAppMessage } }>(`/admin/whatsapp/conversations/${conversationId}/messages`, { method: 'POST', body: { body }, token }),
+  adminWhatsappMarkRead: (conversationId: number, token: string) =>
+    request<{ ok: boolean }>(`/admin/whatsapp/conversations/${conversationId}/read`, { method: 'POST', token }),
+  adminWhatsappSetBotPaused: (conversationId: number, paused: boolean, token: string) =>
+    request<{ ok: boolean }>(`/admin/whatsapp/conversations/${conversationId}/bot-paused`, { method: 'POST', body: { paused }, token }),
+  adminWhatsappWsTicket: (token: string) =>
+    request<{ data: { ticket: string } }>('/admin/whatsapp/ws-ticket', { token }),
+  adminChatbotFlows: (token: string) =>
+    request<{ data: ChatbotFlowSummary[] }>('/admin/chatbot/flows', { token }),
+  adminChatbotFlow: (id: number, token: string) =>
+    request<{ data: ChatbotFlowDetail }>(`/admin/chatbot/flows/${id}`, { token }),
+  adminChatbotCreateFlow: (name: string, token: string) =>
+    request<{ data: ChatbotFlowDetail }>('/admin/chatbot/flows', { method: 'POST', body: { name }, token }),
+  adminChatbotUpdateFlow: (
+    id: number,
+    payload: { name?: string; trigger_keyword?: string; is_active?: boolean; flow?: ChatbotFlowGraph },
+    token: string,
+  ) => request<{ data: ChatbotFlowDetail }>(`/admin/chatbot/flows/${id}`, { method: 'PUT', body: payload, token }),
+  adminChatbotDeleteFlow: (id: number, token: string) =>
+    request<{ ok: boolean }>(`/admin/chatbot/flows/${id}`, { method: 'DELETE', token }),
+  adminListBlockedEmails: (token: string) =>
+    request<{ data: Array<{ id: number; email: string; motivo: string | null; created_at: string }> }>('/admin/blocklist', { token }),
+  adminBlockEmail: (email: string, token: string, motivo?: string) =>
+    request<{ ok: boolean }>('/admin/blocklist', { method: 'POST', body: { email, motivo }, token }),
+  adminUnblockEmail: (email: string, token: string) =>
+    request<{ ok: boolean }>('/admin/blocklist', { method: 'DELETE', body: { email }, token }),
   adminGrantAccess: (id: number, days: number, token: string, planoId?: number | null) =>
     request<{ data: User }>(`/admin/users/${id}/grant-access`, {
       method: 'PUT',
@@ -129,11 +207,17 @@ export const api = {
       telegram: string;
       instagram: string;
       whatsapp: string;
+      youtube: string;
+      phone_validation_required: boolean;
       hidden_nav_items: string[];
       nav_item_labels: Record<string, string>;
       mercado_pago_public_key: string;
       mercado_pago_access_token: string;
       tutorials: Record<string, TutorialConfig>;
+      no_plan_msg_enabled: boolean;
+      no_plan_msg_text: string;
+      no_plan_msg_delay_min: number;
+      no_plan_msg_repeat_min: number;
     }>,
     token: string
   ) => request<{ data: SystemSettings }>('/admin/system-settings', { method: 'PUT', body: payload, token }),
@@ -148,8 +232,27 @@ export const api = {
     request<{ ok: boolean }>(`/admin/planos/${id}`, { method: 'DELETE', token }),
   listPlanos: (token: string) => request<{ data: PlanoPublic[] }>('/planos', { token }),
   listPublicPlanos: () => request<{ data: PlanoPublic[] }>('/public/planos'),
-  createPagamento: (planoId: number, token: string) =>
-    request<{ data: Pagamento }>('/plano/pagamentos', { method: 'POST', body: { plano_id: planoId }, token }),
+  createPagamento: (planoId: number, token: string, codigoCupom?: string | null) =>
+    request<{ data: Pagamento }>('/plano/pagamentos', {
+      method: 'POST',
+      body: { plano_id: planoId, codigo_cupom: codigoCupom ?? undefined },
+      token,
+    }),
+  validarCupom: (codigo: string, planoId: number, token: string) =>
+    request<{ data: CupomValidacao }>('/cupons/validar', {
+      method: 'POST',
+      body: { codigo, plano_id: planoId },
+      token,
+    }),
+  adminListCupons: (token: string) => request<{ data: Cupom[] }>('/admin/cupons', { token }),
+  adminCreateCupom: (payload: CupomPayload, token: string) =>
+    request<{ data: Cupom }>('/admin/cupons', { method: 'POST', body: payload, token }),
+  adminUpdateCupom: (id: number, payload: CupomPayload, token: string) =>
+    request<{ data: Cupom }>(`/admin/cupons/${id}`, { method: 'PUT', body: payload, token }),
+  adminSetCupomCampanha: (id: number, token: string) =>
+    request<{ ok: boolean }>(`/admin/cupons/${id}/campanha`, { method: 'PUT', token }),
+  adminDeleteCupom: (id: number, token: string) =>
+    request<{ ok: boolean }>(`/admin/cupons/${id}`, { method: 'DELETE', token }),
   createPagamentoCartao: (
     payload: {
       plano_id: number;
@@ -159,6 +262,7 @@ export const api = {
       issuer_id?: number | null;
       device_id?: string | null;
       identification?: { type: string; number: string } | null;
+      codigo_cupom?: string | null;
     },
     token: string
   ) =>
@@ -331,6 +435,70 @@ export const api = {
   ) => request<{ ok: boolean }>('/admin/push/subscribe', { method: 'POST', body: payload, token }),
   adminUnsubscribePush: (endpoint: string, token: string) =>
     request<{ ok: boolean }>('/admin/push/unsubscribe', { method: 'POST', body: { endpoint }, token }),
+
+  // ===== Solicitação de molde sob encomenda =====
+  // Público (sem login):
+  solicitacaoConfig: () =>
+    request<{ data: SolicitacaoConfigPublic }>('/public/solicitacao-molde/config'),
+  solicitacaoCriar: (payload: { modelo_key: string; categoria: string; modelo_nome: string; tamanho_cm: number; gomos: number; bainha_cm: number; email: string }) =>
+    request<{ data: SolicitacaoPedido }>('/public/solicitacao-molde', { method: 'POST', body: payload }),
+  solicitacaoCriarCartao: (payload: {
+    modelo_key: string; categoria: string; modelo_nome: string; tamanho_cm: number; gomos: number; bainha_cm: number; email: string;
+    token: string; payment_method_id: string; installments: number; issuer_id: number | null; device_id: string | null; identification: { type: string; number: string };
+  }) => request<{ data: SolicitacaoPedido }>('/public/solicitacao-molde/cartao', { method: 'POST', body: payload }),
+  solicitacaoStatus: (id: number, token: string) =>
+    request<{ data: SolicitacaoPedido }>(`/public/solicitacao-molde/${id}/status`, { method: 'POST', body: { token } }),
+  solicitacaoCancelar: (id: number, token: string) =>
+    request<{ ok: boolean }>(`/public/solicitacao-molde/${id}/cancelar`, { method: 'POST', body: { token } }),
+  solicitacaoRecuperar: (chave: string) =>
+    request<{ data: SolicitacaoPedido }>('/public/solicitacao-molde/recuperar', { method: 'POST', body: { chave } }),
+  solicitacaoSimularPago: (id: number, token: string) =>
+    request<{ data: SolicitacaoPedido }>(`/public/solicitacao-molde/${id}/simular-pago`, { method: 'POST', body: { token } }),
+  solicitacaoAtualizarDados: (id: number, token: string, dados: { modelo_key: string; categoria: string; modelo_nome: string; gomos: number; bainha_cm: number }) =>
+    request<{ data: SolicitacaoPedido }>(`/public/solicitacao-molde/${id}/dados`, { method: 'POST', body: { token, ...dados } }),
+  solicitacaoSalvarTacos: (id: number, token: string, config: unknown) =>
+    request<{ ok: boolean }>(`/public/solicitacao-molde/${id}/tacos`, { method: 'POST', body: { token, config } }),
+  solicitacaoEntregar: (
+    id: number,
+    token: string,
+    pdfBase64: string,
+    filename: string,
+    resumo?: string,
+    tiled?: { a4?: { base64: string; filename: string }; a3?: { base64: string; filename: string } }
+  ) =>
+    request<{ data: SolicitacaoPedido }>(`/public/solicitacao-molde/${id}/entregar`, {
+      method: 'POST',
+      body: {
+        token,
+        pdf_base64: pdfBase64,
+        filename,
+        resumo,
+        pdf_a4_base64: tiled?.a4?.base64,
+        filename_a4: tiled?.a4?.filename,
+        pdf_a3_base64: tiled?.a3?.base64,
+        filename_a3: tiled?.a3?.filename,
+      },
+    }),
+  // Admin:
+  adminSolicitacaoConfig: (token: string) =>
+    request<{ data: AdminSolicitacaoConfig }>('/admin/solicitacao-molde/config', { token }),
+  adminSolicitacaoUpdateConfig: (payload: { valor_metro: number; video_url: string; ativo: boolean }, token: string) =>
+    request<{ ok: boolean }>('/admin/solicitacao-molde/config', { method: 'PUT', body: payload, token }),
+  adminSolicitacaoEnviarChave: (payload: { email: string }, token: string) =>
+    request<{ ok: boolean; chave: string | null }>('/admin/solicitacao-molde/enviar-chave', { method: 'POST', body: payload, token }),
+  adminSolicitacaoConsultarChave: (chave: string, token: string) =>
+    request<{ data: SolicitacaoChaveConsulta }>('/admin/solicitacao-molde/consultar-chave', { method: 'POST', body: { chave }, token }),
+  solicitacaoDefinirDados: (id: number, token: string, dados: { modelo_key: string; categoria: string; modelo_nome: string; tamanho_cm: number; gomos: number; bainha_cm: number }) =>
+    request<{ data: SolicitacaoPedido }>(`/public/solicitacao-molde/${id}/definir-dados`, { method: 'POST', body: { token, ...dados } }),
+  // Push do USUARIO (qualquer logado) — pra receber os comunicados no navegador/app.
+  getVapidPublicKey: (token: string) =>
+    request<{ data: { public_key: string } }>('/push/vapid-public-key', { token }),
+  subscribePush: (
+    payload: { endpoint: string; keys: { p256dh: string; auth: string } },
+    token: string
+  ) => request<{ ok: boolean }>('/push/subscribe', { method: 'POST', body: payload, token }),
+  unsubscribePush: (endpoint: string, token: string) =>
+    request<{ ok: boolean }>('/push/unsubscribe', { method: 'POST', body: { endpoint }, token }),
 };
 
 /** Criacao de rifa manda texto + as 3 fotos juntos (multipart) — primeiro form

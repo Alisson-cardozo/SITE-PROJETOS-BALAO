@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, ChevronDown, ChevronUp, ChevronsDown, ChevronsUp, Loader2, Plus, Printer, Save, Trash2 } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ChevronDown, ChevronUp, ChevronsDown, ChevronsUp, Loader2, Plus, Printer, Save, Trash2 } from 'lucide-react';
 import { GomoTacoPreview } from '../components/GomoTacoPreview';
+import { PlotterCarlaChat } from '../components/PlotterCarlaChat';
+import { buildPlotterConfig, type ChatParte } from '../lib/solicitacaoTaqueado';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import {
@@ -30,12 +32,15 @@ interface PlotterTacosPageProps {
   projectId?: number | null;
   isBlank?: boolean;
   onBackToGallery?: () => void;
+  /** Fecha o plotter e vai pra aba Meus Projetos → Moldes Taqueados (usado
+   * quando a Carla termina de montar e salvar um molde). */
+  onGoToTaqueados?: () => void;
 }
 
 type SectionColors = Record<MoldSection['id'], string>;
 
 const DEFAULT_COLORS: SectionColors = { ...SECTION_COLORS };
-const MAX_PARTITIONS = 6;
+const MAX_PARTITIONS = 40;
 
 /** Paleta de preenchimento ao criar novas reparticoes (cores distintas). */
 const PART_FILL_COLORS = [
@@ -61,7 +66,7 @@ function formatCm(value: number): string {
   return `${text} cm`;
 }
 
-export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank = false, onBackToGallery }: PlotterTacosPageProps) {
+export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank = false, onBackToGallery, onGoToTaqueados }: PlotterTacosPageProps) {
   const { token, user } = useAuth();
   const [mold, setMold] = useState<MoldDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -83,6 +88,13 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
   /** Controla quais secoes ja foram desbloqueadas no fluxo guiado.
    * Boca sempre comeca ativa; Bojo e Bico desbloqueiam conforme o usuario avanca. */
   const [unlockedSections, setUnlockedSections] = useState<Set<MoldSection['id']>>(() => new Set<MoldSection['id']>(['boca']));
+
+  /** Modo de entrada dos tacos: painel manual (padrao) ou chat da Carla. */
+  const [inputMode, setInputMode] = useState<'manual' | 'carla'>('manual');
+
+  /** A Assistente-IA Carla só fica disponível se o plano do usuário liberar
+   * (recurso a parte). Admin sempre tem. */
+  const carlaDisponivel = user?.role === 'admin' || user?.carla_ia_disponivel === true;
 
   /** Controle de cards minimizados por secao (Boca, Bojo, Bico) */
   const [collapsedSections, setCollapsedSections] = useState<Record<MoldSection['id'], boolean>>({
@@ -294,20 +306,20 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
     };
   }, [moldId, projectId, token, reloadTrigger, draftKey]);
 
-  async function handleSaveConfig() {
+  /** Persiste um payload de config (cria projeto novo se currentProjectId==null,
+   * senão atualiza). Núcleo compartilhado por "Salvar configuração" e pela Carla. */
+  async function persistConfig(payload: {
+    section_colors: SectionColors;
+    section_ratios: SectionRatios;
+    taco_configs: SectionTacoConfigMap;
+  }): Promise<boolean> {
     if (!token || moldId == null || saving) {
-      return;
+      return false;
     }
 
     setSaving(true);
     setSaveError(null);
     setSaveSuccess(null);
-
-    const payload = {
-      section_colors: sectionColors,
-      section_ratios: sectionRatios,
-      taco_configs: tacoConfigs,
-    };
 
     try {
       if (currentProjectId != null) {
@@ -326,12 +338,87 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
         } catch {}
       }
       setHasDraftLoaded(false);
-
+      return true;
     } catch (err) {
       setSaveError(err instanceof ApiError ? err.message : 'Nao foi possivel salvar a configuracao.');
+      return false;
     } finally {
       setSaving(false);
     }
+  }
+
+  async function handleSaveConfig() {
+    await persistConfig({
+      section_colors: sectionColors,
+      section_ratios: sectionRatios,
+      taco_configs: tacoConfigs,
+    });
+  }
+
+  /**
+   * Compara a altura "so o que foi configurado" (editor ao vivo) com a altura
+   * "completa" (o que vai sair de verdade no molde salvo/plotado) por seção.
+   * Onde a diferença for real, avisa o cliente ANTES de salvar — pra ele nao
+   * ser pego de surpresa com o sistema completando a sequencia sozinho.
+   */
+  function computeFillWarnings(): Array<{ id: MoldSection['id']; label: string; addedCm: number }> {
+    if (!mold || !profile) {
+      return [];
+    }
+    const filledProfile = buildMoldProfile(mold.pontos, sectionRatios, tacoConfigs, true);
+    if (!filledProfile) {
+      return [];
+    }
+    const warnings: Array<{ id: MoldSection['id']; label: string; addedCm: number }> = [];
+    for (const id of ['bico', 'bojo', 'boca'] as const) {
+      const raw = profile.secoes.find((s) => s.id === id);
+      const filled = filledProfile.secoes.find((s) => s.id === id);
+      if (!raw || !filled) {
+        continue;
+      }
+      const addedCm = Math.round((filled.alturaCm - raw.alturaCm) * 10) / 10;
+      if (addedCm > 1) {
+        warnings.push({ id, label: raw.nome, addedCm });
+      }
+    }
+    return warnings;
+  }
+
+  const [pendingFillWarnings, setPendingFillWarnings] = useState<Array<{
+    id: MoldSection['id'];
+    label: string;
+    addedCm: number;
+  }> | null>(null);
+
+  /** Chamado pelos botoes "Salvar" — avisa antes se algo vai ser completado sozinho. */
+  function handleSaveClick() {
+    const warnings = computeFillWarnings();
+    if (warnings.length > 0) {
+      setPendingFillWarnings(warnings);
+      return;
+    }
+    void handleSaveConfig();
+  }
+
+  /** Salva o molde montado pela Carla DIRETO das partes finais (inclui o
+   * "bico"/última parte que completa o molde) — sem depender do estado do
+   * preview, evitando qualquer perda de última parte por timing. */
+  async function saveCarlaMold(partes: ChatParte[], tipo: 'unico' | 'progressivo', tamanhoUnico: number) {
+    const cfg = buildPlotterConfig(partes, tipo, tamanhoUnico);
+    // Reflete no preview também
+    setSectionColors((prev) => ({ ...prev, ...cfg.section_colors }));
+    setSectionRatios(cfg.section_ratios);
+    setTacoConfigs(cfg.taco_configs);
+    const ok = await persistConfig({
+      section_colors: { ...DEFAULT_COLORS, ...cfg.section_colors },
+      section_ratios: cfg.section_ratios,
+      taco_configs: cfg.taco_configs,
+    });
+    if (!ok) {
+      throw new Error('Não foi possível salvar.');
+    }
+    // Fecha o plotter e vai direto pra Meus Projetos → Moldes Taqueados.
+    onGoToTaqueados?.();
   }
 
   const profile = useMemo(
@@ -576,9 +663,6 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
   function removePartition(sectionId: MoldSection['id'], partitionId: string) {
     setTacoConfigs((prev) => {
       const current = prev[sectionId].partitions;
-      if (current.length <= 1) {
-        return prev;
-      }
       const next = current.filter((p) => p.id !== partitionId);
       return {
         ...prev,
@@ -605,6 +689,42 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
       const created = createPartition(4, 5, 10, corNova, corDivisao);
       return { ...prev, [sectionId]: { partitions: [created] } };
     });
+  }
+
+  /** Altura total do molde carregado — o alvo que a Carla vai preencher. */
+  const alvoCarlaCm = profile?.alturaTotalCm ?? 0;
+
+  /** Zera o molde (sem tacos) e volta os ratios ao padrão — usado ao entrar na
+   * Carla e ao "montar outro" do zero. */
+  function resetCarlaMold() {
+    setTacoConfigs({
+      boca: { partitions: [] },
+      bojo: { partitions: [] },
+      bico: { partitions: [] },
+    });
+    setSectionRatios({ ...DEFAULT_SECTION_RATIOS });
+    setUnlockedSections(new Set<MoldSection['id']>(['boca']));
+    // Cada molde montado na Carla vira um projeto NOVO (não sobrescreve o anterior).
+    setCurrentProjectId(null);
+    setSaveSuccess(null);
+  }
+
+  /** Entra no modo Carla ZERANDO o molde — o preview começa só com a silhueta e
+   * vai sendo montado conforme a conversa. */
+  function enterCarlaMode() {
+    resetCarlaMold();
+    setInputMode('carla');
+  }
+
+  /** A Carla montou N partes (igual à venda): converte pra config do plotter
+   * (todas as partes viram partições da Boca cobrindo 100% do molde) e joga no
+   * preview ao vivo. */
+  function applyCarlaPartes(partes: ChatParte[], tipo: 'unico' | 'progressivo', tamanhoUnico: number) {
+    const cfg = buildPlotterConfig(partes, tipo, tamanhoUnico);
+    setSectionColors((prev) => ({ ...prev, ...cfg.section_colors }));
+    setSectionRatios(cfg.section_ratios);
+    setTacoConfigs(cfg.taco_configs);
+    setUnlockedSections(new Set<MoldSection['id']>(['boca']));
   }
 
   if (moldId == null) {
@@ -648,7 +768,7 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
             <button
               type="button"
               className="mold-save-button"
-              onClick={() => void handleSaveConfig()}
+              onClick={handleSaveClick}
               disabled={saving || loading}
             >
               {saving ? <Loader2 size={16} className="mold-import-spinner" /> : <Save size={16} />}
@@ -731,6 +851,7 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
                 sectionRatios={sectionRatios}
                 bainhaCm={mold.bainha_cm}
                 showDetails
+                fillDeficit={false}
               />
             </div>
           </div>
@@ -739,7 +860,7 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
             <div className="plotter-config-head">
               <div className="plotter-config-head-top">
                 <h3>Configuracao dos tacos</h3>
-                <div className="plotter-quick-toggles">
+                <div className="plotter-quick-toggles" style={{ display: inputMode === 'manual' ? undefined : 'none' }}>
                   <button
                     type="button"
                     className="plotter-quick-toggle-btn"
@@ -765,9 +886,40 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
                 aguenta) e a quantidade <strong>subindo/total sobe</strong>. Totais entre partes
                 se compensam (50→60, outro 40). Boca ↔ Bojo trocam altura.
               </p>
+
+              {/* Alternar entre preencher na mão (Manual) ou conversar com a Carla.
+                  A Carla só aparece se o plano do usuário liberar (admin sempre). */}
+              {carlaDisponivel && (
+                <div className="plotter-mode-toggle" style={{ display: 'flex', gap: '6px', marginTop: '10px', background: '#0b0f18', border: '1px solid #23304d', borderRadius: '10px', padding: '4px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setInputMode('manual')}
+                    style={{ flex: 1, padding: '8px', borderRadius: '7px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', border: 'none', background: inputMode === 'manual' ? '#3182ce' : 'transparent', color: inputMode === 'manual' ? '#fff' : '#a0aec0' }}
+                  >
+                    Manual
+                  </button>
+                  <button
+                    type="button"
+                    onClick={enterCarlaMode}
+                    style={{ flex: 1, padding: '8px', borderRadius: '7px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', border: 'none', background: inputMode === 'carla' ? '#805ad5' : 'transparent', color: inputMode === 'carla' ? '#fff' : '#a0aec0', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                  >
+                    🤖 Assistente-IA Carla
+                  </button>
+                </div>
+              )}
             </div>
 
-            {sectionStats.map(({ secao, config, bandStats, totalTacos }) => {
+            {inputMode === 'carla' && carlaDisponivel && (
+              <PlotterCarlaChat
+                userName={(user?.name ?? '').split(' ')[0] ?? ''}
+                alvoCm={alvoCarlaCm}
+                onUpdatePreview={applyCarlaPartes}
+                onSave={saveCarlaMold}
+                savedMessage={saveSuccess}
+              />
+            )}
+
+            {(inputMode === 'manual' || !carlaDisponivel) && sectionStats.map(({ secao, config, bandStats, totalTacos }) => {
               // Fluxo guiado: so mostra secoes desbloqueadas
               if (!unlockedSections.has(secao.id)) return null;
 
@@ -861,9 +1013,7 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
                             <p>Nenhum taco nesta seção. Clique em "Adicionar repartição" abaixo para começar.</p>
                           </div>
                         ) : (
-                          bandStats
-                            .filter(({ band }) => !(band.flatConfig as any).isBlank)
-                            .map(({ band, divisions }, index) => {
+                          bandStats.map(({ band, divisions }, index) => {
                           const partition = band.partition;
                           const isPartCollapsed = Boolean(collapsedPartitions[partition.id]);
                           // Numeracao cresce de baixo pra cima
@@ -915,19 +1065,17 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
                                   >
                                     <Plus size={14} />
                                   </button>
-                                  {partCount > 1 ? (
-                                    <button
-                                      type="button"
-                                      className="plotter-partition-remove"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        removePartition(secao.id, partition.id);
-                                      }}
-                                      title="Remover repartição"
-                                    >
-                                      <Trash2 size={14} />
-                                    </button>
-                                  ) : null}
+                                  <button
+                                    type="button"
+                                    className="plotter-partition-remove"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      removePartition(secao.id, partition.id);
+                                    }}
+                                    title="Remover repartição"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
                                   <button
                                     type="button"
                                     className="plotter-partition-collapse-toggle"
@@ -974,7 +1122,16 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
                                           step={1}
                                           inputMode="numeric"
                                           defaultValue={partition.tacosSubindo}
-                                          key={`subindo-${partition.id}-${partition.tacosSubindo}`}
+                                          key={`subindo-${partition.id}`}
+                                          onChange={(event) => {
+                                            // Atualiza ao vivo a cada tecla — a previa (e o resto do
+                                            // card) tem que acompanhar o que o cliente esta digitando,
+                                            // nao so quando ele clica fora do campo.
+                                            const raw = Math.floor(Number(event.target.value));
+                                            if (Number.isFinite(raw) && raw > 0) {
+                                              updatePartitionSubindo(secao.id, partition.id, raw);
+                                            }
+                                          }}
                                           onBlur={(event) => {
                                             let next = Math.max(
                                               1,
@@ -1009,7 +1166,13 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
                                           step={1}
                                           inputMode="numeric"
                                           defaultValue={partition.tacosPorGomo}
-                                          key={`tpg-${partition.id}-${partition.tacosPorGomo}`}
+                                          key={`tpg-${partition.id}`}
+                                          onChange={(event) => {
+                                            const raw = Math.floor(Number(event.target.value));
+                                            if (Number.isFinite(raw) && raw > 0) {
+                                              updatePartitionTacosPorGomo(secao.id, partition.id, Math.min(64, raw));
+                                            }
+                                          }}
                                           onBlur={(event) => {
                                             const next = Math.max(
                                               1,
@@ -1036,7 +1199,15 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
                                           step={0.5}
                                           inputMode="decimal"
                                           defaultValue={partition.alturaTacoCm}
-                                          key={`at-${partition.id}-${partition.alturaTacoCm}`}
+                                          key={`at-${partition.id}`}
+                                          onChange={(event) => {
+                                            // Mesma logica do campo de tacos subindo: atualiza ao vivo,
+                                            // sem esperar sair do campo.
+                                            const raw = Number(event.target.value);
+                                            if (Number.isFinite(raw) && raw > 0) {
+                                              updatePartitionAlturaTaco(secao.id, partition.id, raw);
+                                            }
+                                          }}
                                           onBlur={(event) => {
                                             // arredonda pra 0.5 mais proximo (aceita 1.5, 2, 2.5...)
                                             let next = Math.max(
@@ -1219,7 +1390,7 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
           <button
             type="button"
             className="mobile-bar-btn save-btn"
-            onClick={() => void handleSaveConfig()}
+            onClick={handleSaveClick}
             disabled={saving || loading}
           >
             <Save size={18} />
@@ -1227,6 +1398,49 @@ export function PlotterTacosPage({ moldId, moldHint, projectId = null, isBlank =
           </button>
         )}
       </nav>
+
+      {pendingFillWarnings && (
+        <div
+          className="plotter-fill-warning-overlay"
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }}
+        >
+          <div style={{ background: '#141b2b', border: '1px solid #2d3748', borderRadius: '14px', padding: '24px', maxWidth: '420px', width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+              <AlertTriangle size={22} color="#ecc94b" />
+              <h3 style={{ margin: 0, color: '#f7fafc', fontSize: '17px' }}>Vai completar o molde</h3>
+            </div>
+            <p style={{ color: '#a0aec0', fontSize: '14px', lineHeight: 1.5, margin: '0 0 12px' }}>
+              Você não preencheu tudo ainda. Ao salvar, o sistema vai continuar a última sequência configurada até o fim de:
+            </p>
+            <ul style={{ margin: '0 0 16px', paddingLeft: '20px', color: '#f7fafc', fontSize: '14px' }}>
+              {pendingFillWarnings.map((w) => (
+                <li key={w.id} style={{ marginBottom: '4px' }}>
+                  <strong>{w.label}</strong> — mais {formatCm(w.addedCm)} de taco
+                </li>
+              ))}
+            </ul>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => setPendingFillWarnings(null)}
+                style={{ background: '#1a202c', border: '1px solid #2d3748', color: '#cbd5e0', borderRadius: '8px', padding: '10px 16px', fontSize: '13.5px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                Cancelar, quero ajustar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingFillWarnings(null);
+                  void handleSaveConfig();
+                }}
+                style={{ background: '#25d366', border: 'none', color: '#06210f', borderRadius: '8px', padding: '10px 16px', fontSize: '13.5px', fontWeight: 700, cursor: 'pointer' }}
+              >
+                Continuar e salvar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

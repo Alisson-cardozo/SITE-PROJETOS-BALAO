@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Core\Request;
 use App\Core\Response;
+use App\Services\WebPushService;
 use App\Support\Db;
 use App\Support\Mailer;
 use Throwable;
@@ -94,6 +95,23 @@ final class ComunicadoController
             }
         }
 
+        // Notificacao push (navegador/app) pra quem ativou — mesma audiencia do
+        // e-mail. Nunca trava a requisicao: WebPushService::sendToUsers nao lanca.
+        $pushStats = ['sent' => 0, 'failed' => 0, 'total' => 0];
+        try {
+            $resumo = mb_strimwidth($conteudo, 0, 140, '…');
+            $pushStats = (new WebPushService())->sendToUsers(
+                [
+                    'title' => $titulo,
+                    'body' => $resumo,
+                    'data' => ['url' => '/', 'comunicado_id' => $id],
+                ],
+                $sendEmailTo === 'selected' ? $filteredEmails : null
+            );
+        } catch (Throwable $e) {
+            // ignora — o comunicado ja foi salvo e os e-mails enviados
+        }
+
         $comunicado = $pdo->query("SELECT *, 0 as total_views FROM comunicados WHERE id = {$id}")->fetch();
 
         return Response::json([
@@ -101,7 +119,8 @@ final class ComunicadoController
             'email_stats' => [
                 'sent' => $sentCount,
                 'failed' => $failedCount
-            ]
+            ],
+            'push_stats' => $pushStats
         ]);
     }
 

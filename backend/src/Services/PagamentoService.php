@@ -28,15 +28,19 @@ final class PagamentoService
 
     /**
      * @param array{id:int, nome:string, valor:float, dias_acesso:int} $plano
+     *   `valor` ja pode vir com o desconto do cupom aplicado (o controller
+     *   calcula) — e o que sera cobrado e guardado.
      */
-    public function criar(int $userId, string $userEmail, array $plano, string $notificationUrl): array
+    public function criar(int $userId, string $userEmail, array $plano, string $notificationUrl, ?int $cupomId = null): array
     {
         $stmt = Db::connection()->prepare(
-            "INSERT INTO pagamentos (user_id, plano_id, valor, status) VALUES (:user_id, :plano_id, :valor, 'pendente')"
+            "INSERT INTO pagamentos (user_id, plano_id, cupom_id, valor, status)
+             VALUES (:user_id, :plano_id, :cupom_id, :valor, 'pendente')"
         );
         $stmt->execute([
             'user_id' => $userId,
             'plano_id' => $plano['id'],
+            'cupom_id' => $cupomId,
             'valor' => $plano['valor'],
         ]);
         $id = (int) Db::connection()->lastInsertId();
@@ -86,17 +90,19 @@ final class PagamentoService
         string $userEmail,
         array $plano,
         string $notificationUrl,
-        array $cartao
+        array $cartao,
+        ?int $cupomId = null
     ): array {
         $parcelas = max(1, (int) ($cartao['installments'] ?? 1));
 
         $stmt = Db::connection()->prepare(
-            "INSERT INTO pagamentos (user_id, plano_id, valor, status, metodo, parcelas)
-             VALUES (:user_id, :plano_id, :valor, 'pendente', 'cartao', :parcelas)"
+            "INSERT INTO pagamentos (user_id, plano_id, cupom_id, valor, status, metodo, parcelas)
+             VALUES (:user_id, :plano_id, :cupom_id, :valor, 'pendente', 'cartao', :parcelas)"
         );
         $stmt->execute([
             'user_id' => $userId,
             'plano_id' => $plano['id'],
+            'cupom_id' => $cupomId,
             'valor' => $plano['valor'],
             'parcelas' => $parcelas,
         ]);
@@ -196,6 +202,19 @@ final class PagamentoService
             $stmt->execute(['id' => $row['id']]);
 
             if ($stmt->rowCount() > 0) {
+                // Registra o uso do cupom (1x por mes) — so agora que pagou.
+                if (!empty($row['cupom_id'])) {
+                    try {
+                        (new CupomService())->registrarUso(
+                            (int) $row['cupom_id'],
+                            (int) $row['user_id'],
+                            (int) $row['id']
+                        );
+                    } catch (Throwable $e) {
+                        // nao trava a liberacao de acesso
+                    }
+                }
+
                 $plano = $this->planos->findRawById((int) $row['plano_id']);
                 if ($plano !== null) {
                     $this->users->grantAccess((int) $row['user_id'], (int) $plano['dias_acesso'], (int) $plano['id']);

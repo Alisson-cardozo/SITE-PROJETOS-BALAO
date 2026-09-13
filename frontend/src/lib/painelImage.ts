@@ -40,14 +40,27 @@ export function suggestVetorizarSize(naturalWidthPx: number, naturalHeightPx: nu
   };
 }
 
+/** Quanto a foto original e borrada antes de virar modulo — a grade final de
+ * malha e bem pequena (poucas dezenas/centenas de modulos), entao so reduzir
+ * a resolucao de trabalho quase nao muda o resultado (o "taquear pra malha"
+ * ja escolhe a cor mais frequente de cada area). Borrar de verdade antes,
+ * porem, muda quais cores se misturam nas bordas — dando um resultado
+ * visivelmente mais suave. Opcional — o padrao ("alta") nao borra nada. */
+export type VetorizacaoIntensidade = 'baixa' | 'media' | 'alta';
+const VETORIZACAO_BLUR_PX: Record<VetorizacaoIntensidade, number> = {
+  baixa: 8,
+  media: 4,
+  alta: 0,
+};
+
 /** Le a imagem enviada numa resolucao de trabalho alta (nao e uma grade final
  * ainda, e so pra editar cor com detalhe antes de taquear pra malha) —
  * reaproveita o mesmo box-filter (media de area) de `readBandeiraPixelGrid`,
  * so que com um teto de resolucao bem maior. */
-export async function readPainelSourceImage(file: File): Promise<BandeiraPixelGrid> {
+export async function readPainelSourceImage(file: File, intensidade: VetorizacaoIntensidade = 'alta'): Promise<BandeiraPixelGrid> {
   const natural = await readImageNaturalSize(file);
   const target = suggestVetorizarSize(natural.widthPx, natural.heightPx);
-  return readBandeiraPixelGrid(file, target.widthPx, target.heightPx);
+  return readBandeiraPixelGrid(file, target.widthPx, target.heightPx, VETORIZACAO_BLUR_PX[intensidade]);
 }
 
 /**

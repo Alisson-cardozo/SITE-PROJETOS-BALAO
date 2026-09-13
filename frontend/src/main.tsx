@@ -4,6 +4,7 @@ import { App } from './App';
 import { AuthProvider } from './lib/auth';
 import { LojaPublicPage } from './pages/LojaPublicPage';
 import { RifaPublicPage } from './pages/RifaPublicPage';
+import { SolicitarMoldePublicPage } from './pages/SolicitarMoldePublicPage';
 import './lib/pwaInstall';
 import './styles.css';
 
@@ -30,6 +31,7 @@ setInterval(() => {
 // pathname em vez de trazer uma lib de rotas so pra isso.
 const rifaMatch = window.location.pathname.match(/^\/rifa\/([^/]+)\/?$/);
 const lojaMatch = window.location.pathname.match(/^\/loja\/?$/);
+const solicitarMoldeMatch = window.location.pathname.match(/^\/solicitar-molde\/?$/);
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -43,6 +45,8 @@ createRoot(document.getElementById('root')!).render(
       <RifaPublicPage slug={decodeURIComponent(rifaMatch[1])} />
     ) : lojaMatch ? (
       <LojaPublicPage />
+    ) : solicitarMoldeMatch ? (
+      <SolicitarMoldePublicPage />
     ) : (
       <AuthProvider>
         <App />

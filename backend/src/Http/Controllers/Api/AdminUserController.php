@@ -55,6 +55,26 @@ final class AdminUserController
         $pending = (int) $pdo->query("SELECT COUNT(*) FROM users WHERE status = 'pending_payment'")->fetchColumn();
         $blocked = (int) $pdo->query("SELECT COUNT(*) FROM users WHERE status = 'blocked'")->fetchColumn();
 
+        // Vendas de molde sob encomenda (solicitacoes_molde). Protegido caso a
+        // tabela ainda nao exista neste banco.
+        $moldsSoldTotal = 0;
+        $moldsBilling = 0.0;
+        try {
+            // valor > 0 exclui as chaves de CORTESIA geradas pelo admin (valor 0)
+            // — elas não são vendas, só contam as pagas de verdade (Pix/cartão).
+            $moldsSoldTotal = (int) $pdo->query("SELECT COUNT(*) FROM solicitacoes_molde WHERE status IN ('pago','entregue') AND valor > 0")->fetchColumn();
+            $moldsBilling = (float) $pdo->query("
+                SELECT COALESCE(SUM(valor), 0)
+                FROM solicitacoes_molde
+                WHERE status IN ('pago','entregue')
+                  AND valor > 0
+                  AND MONTH(paid_at) = MONTH(CURRENT_DATE())
+                  AND YEAR(paid_at) = YEAR(CURRENT_DATE())
+            ")->fetchColumn();
+        } catch (\Throwable $e) {
+            // tabela nao existe ainda — mantem zeros
+        }
+
         return Response::json([
             'data' => $data,
             'stats' => [
@@ -64,6 +84,9 @@ final class AdminUserController
                 'pending' => $pending,
                 'blocked' => $blocked,
                 'monthly_billing' => $faturamento,
+                'molds_sold_total' => $moldsSoldTotal,
+                'molds_billing' => $moldsBilling,
+                'total_billing' => $faturamento + $moldsBilling,
             ]
         ]);
     }
@@ -81,6 +104,14 @@ final class AdminUserController
         }
 
         $this->users->updateStatus((int) $target['id'], $status);
+
+        // Bloquear o acesso tambem bloqueia o e-mail (nao consegue logar nem
+        // criar conta nova). Desbloquear (voltar pra active) libera o e-mail.
+        if ($status === 'blocked') {
+            $this->users->blockEmail((string) $target['email'], 'Cliente bloqueado pelo admin');
+        } else {
+            $this->users->unblockEmail((string) $target['email']);
+        }
 
         return Response::json(['data' => $this->users->toPublicArray($this->users->findById((int) $target['id']))]);
     }
@@ -107,6 +138,8 @@ final class AdminUserController
         }
 
         $this->users->grantAccess((int) $target['id'], (int) $days, $planoId, $updatePlano);
+        // Liberar acesso tira o e-mail da blocklist (caso estivesse bloqueado).
+        $this->users->unblockEmail((string) $target['email']);
 
         return Response::json(['data' => $this->users->toPublicArray($this->users->findById((int) $target['id']))]);
     }
@@ -121,6 +154,45 @@ final class AdminUserController
         $this->users->revokeAccess((int) $target['id']);
 
         return Response::json(['data' => $this->users->toPublicArray($this->users->findById((int) $target['id']))]);
+    }
+
+    // ===== Blocklist de e-mails =====
+
+    /** Lista os e-mails bloqueados. */
+    public function listBlockedEmails(Request $request): Response
+    {
+        return Response::json(['data' => $this->users->listBlockedEmails()]);
+    }
+
+    /** Bloqueia um e-mail manualmente (impede login e novo cadastro). Se existir
+     * uma conta com esse e-mail, tambem marca ela como bloqueada. */
+    public function blockEmail(Request $request): Response
+    {
+        $email = strtolower(trim((string) $request->input('email', '')));
+        if ($email === '' || filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+            return Response::json(['errors' => ['email' => 'Informe um e-mail válido.'], 'error' => 'E-mail inválido.'], 422);
+        }
+        $motivo = trim((string) ($request->input('motivo') ?? '')) ?: null;
+        $this->users->blockEmail($email, $motivo);
+
+        // Se ja existe conta com esse e-mail, bloqueia a conta tambem.
+        $existing = $this->users->findByEmail($email);
+        if ($existing !== null && ($existing['role'] ?? '') !== 'admin') {
+            $this->users->updateStatus((int) $existing['id'], 'blocked');
+        }
+
+        return Response::json(['ok' => true]);
+    }
+
+    /** Remove um e-mail da blocklist. */
+    public function unblockEmail(Request $request): Response
+    {
+        $email = strtolower(trim((string) $request->input('email', '')));
+        if ($email === '') {
+            return Response::json(['error' => 'Informe o e-mail.'], 422);
+        }
+        $this->users->unblockEmail($email);
+        return Response::json(['ok' => true]);
     }
 
     public function destroy(Request $request): Response

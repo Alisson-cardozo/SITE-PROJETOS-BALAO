@@ -8,6 +8,7 @@ export function AdminSocialPage() {
   const [telegram, setTelegram] = useState('');
   const [instagram, setInstagram] = useState('');
   const [whatsapp, setWhatsapp] = useState('');
+  const [youtube, setYoutube] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,6 +23,7 @@ export function AdminSocialPage() {
       setTelegram(response.data.telegram ?? '');
       setInstagram(response.data.instagram ?? '');
       setWhatsapp(response.data.whatsapp ?? '');
+      setYoutube(response.data.youtube ?? '');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Nao foi possivel carregar as redes sociais.');
     } finally {
@@ -40,7 +42,7 @@ export function AdminSocialPage() {
     setSaving(true);
     try {
       await api.adminUpdateSystemSettings(
-        { telegram: telegram.trim(), instagram: instagram.trim(), whatsapp: whatsapp.trim() },
+        { telegram: telegram.trim(), instagram: instagram.trim(), whatsapp: whatsapp.trim(), youtube: youtube.trim() },
         token
       );
       setSuccess(true);
@@ -93,6 +95,19 @@ export function AdminSocialPage() {
                 onChange={(e) => setWhatsapp(e.target.value)}
                 placeholder="5511999998888"
               />
+            </label>
+
+            <label className="auth-field">
+              <span>Canal do YouTube</span>
+              <input
+                type="text"
+                value={youtube}
+                onChange={(e) => setYoutube(e.target.value)}
+                placeholder="https://youtube.com/@seucanal"
+              />
+              <small className="bandeira-size-hint">
+                Aparece como botão pros clientes verem as funcionalidades do sistema.
+              </small>
             </label>
 
             {error ? <p className="mold-import-error">{error}</p> : null}

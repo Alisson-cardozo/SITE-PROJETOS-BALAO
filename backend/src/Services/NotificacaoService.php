@@ -70,6 +70,59 @@ final class NotificacaoService
         }
     }
 
+    /**
+     * Notifica o admin de uma venda de MOLDE sob encomenda (pago via Pix/cartao,
+     * ou cortesia). Registra no historico + dispara Web Push. Best-effort.
+     *
+     * @param array<string,mixed> $pedido linha de solicitacoes_molde
+     */
+    public function criarMoldeNotificacao(array $pedido): void
+    {
+        $modelo = (string) ($pedido['modelo_nome'] ?? 'Molde');
+        $email = (string) ($pedido['email'] ?? '');
+        $valor = (float) ($pedido['valor'] ?? 0);
+        $tamanho = (float) ($pedido['tamanho_cm'] ?? 0);
+        $valorFmt = 'R$ ' . number_format($valor, 2, ',', '.');
+
+        $titulo = '🔨 Venda de molde — ' . $modelo;
+        $partes = [$valorFmt];
+        if ($tamanho > 0) {
+            $partes[] = rtrim(rtrim(number_format($tamanho, 2, ',', '.'), '0'), ',') . ' cm';
+        }
+        if ($email !== '') {
+            $partes[] = $email;
+        }
+        $mensagem = implode(' • ', $partes);
+
+        $dados = [
+            'solicitacao_id' => (int) ($pedido['id'] ?? 0),
+            'modelo_nome' => $modelo,
+            'cliente_email' => $email,
+            'valor' => $valor,
+            'tamanho_cm' => $tamanho,
+            'chave' => (string) ($pedido['chave_unica'] ?? ''),
+        ];
+
+        Db::connection()->prepare(
+            "INSERT INTO notificacoes (tipo, titulo, mensagem, dados_json)
+             VALUES ('molde', :titulo, :mensagem, :dados)"
+        )->execute([
+            'titulo' => $titulo,
+            'mensagem' => $mensagem,
+            'dados' => json_encode($dados, JSON_UNESCAPED_UNICODE),
+        ]);
+
+        try {
+            (new WebPushService())->sendToAdmins([
+                'title' => $titulo,
+                'body' => $mensagem,
+                'data' => ['tipo' => 'molde', 'url' => '/', 'solicitacao_id' => (int) ($pedido['id'] ?? 0)],
+            ]);
+        } catch (Throwable $e) {
+            // Push e best-effort: o historico ja foi salvo.
+        }
+    }
+
     /** @return array<int,array<string,mixed>> */
     public function listar(int $limit = 100): array
     {

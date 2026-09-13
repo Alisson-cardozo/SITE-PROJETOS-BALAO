@@ -9,8 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@xyflow/react": "^12.11.3",
     "jspdf": "^4.2.1",
     "lucide-react": "^1.25.0",
+    "mediabunny": "^1.53.1",
+    "mp4-muxer": "^5.2.2",
     "pdfjs-dist": "^6.1.200",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

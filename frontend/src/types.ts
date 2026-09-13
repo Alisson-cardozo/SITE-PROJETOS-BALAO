@@ -20,12 +20,29 @@ export interface User {
   /** Ids de aba que o plano atual libera. null = sem restricao (admin, ou
    * plano que libera tudo) -- ver PlanoService::abasForPlanoId no backend. */
   allowed_abas?: string[] | null;
+  /** Assistente-IA Carla liberada pra esse usuário (plano com carla_ia, ou admin). */
+  carla_ia_disponivel?: boolean;
   created_at?: string | null;
   active_session_id?: string | null;
   session_device?: string | null;
   session_created_at?: string | null;
   last_activity?: string | null;
   is_online?: boolean;
+  /** Último IP (rede/wifi) do cliente, capturado no login. */
+  last_ip?: string | null;
+  /** Telefone (WhatsApp) e se já foi validado por código. */
+  phone?: string | null;
+  phone_verified?: boolean;
+  /** true = o admin exige validação de telefone (portão). */
+  phone_validation_required?: boolean;
+  /** Aba/ferramenta que o cliente está usando agora (pro admin ver). */
+  current_view?: string | null;
+  /** E-mail confirmado por codigo. Admin sempre true. */
+  email_verified?: boolean;
+  /** Prazo (1h) pra confirmar antes da conta ser excluida. */
+  email_verification_deadline?: string | null;
+  /** So no painel do admin: gerou pagamento (Pix) mas nunca efetuou. */
+  has_pending_payment?: boolean;
 }
 
 export interface TutorialConfig {
@@ -37,6 +54,10 @@ export interface SystemSettings {
   telegram: string | null;
   instagram: string | null;
   whatsapp: string | null;
+  /** Link do canal do YouTube (mostrado pros clientes verem as funcionalidades). */
+  youtube: string | null;
+  /** Exigir validação de telefone (portão obrigatório) — só se o admin ligar. */
+  phone_validation_required?: boolean;
   hidden_nav_items: string[];
   /** Rotulo opcional por aba escondida (ex.: {"profissionais":"Em breve"}) —
    * so faz sentido pra ids que tambem estao em hidden_nav_items. */
@@ -44,6 +65,11 @@ export interface SystemSettings {
   mercado_pago_public_key: string | null;
   mercado_pago_access_token_configured: boolean;
   tutorials?: Record<string, TutorialConfig> | null;
+  /** Mensagem automatica por WhatsApp pra quem se cadastrou e nao ativou plano. */
+  no_plan_msg_enabled: boolean;
+  no_plan_msg_text: string | null;
+  no_plan_msg_delay_min: number;
+  no_plan_msg_repeat_min: number;
 }
 
 export interface Plano {
@@ -61,6 +87,8 @@ export interface Plano {
   updated_at: string;
   show_in_ranking?: boolean;
   sales_override_count?: number;
+  /** Assistente-IA Carla disponível neste plano. */
+  carla_ia?: boolean;
 }
 
 export interface PlanoPublic {
@@ -71,6 +99,8 @@ export interface PlanoPublic {
   abas: string[];
   show_in_ranking?: boolean;
   sales_override_count?: number;
+  /** Assistente-IA Carla disponível neste plano (efeito no card). */
+  carla_ia?: boolean;
 }
 
 export interface PlanoPayload {
@@ -80,6 +110,7 @@ export interface PlanoPayload {
   abas: string[];
   show_in_ranking: boolean;
   sales_override_count: number;
+  carla_ia: boolean;
 }
 
 export type PagamentoStatus = 'pendente' | 'aprovado' | 'rejeitado';
@@ -513,6 +544,177 @@ export interface BandeiraPayload {
   altura_px: number;
   grid_runs: BandeiraGridRun[];
   color_table: BandeiraColorEntry[];
+}
+
+export interface CupomPlanoRegra {
+  plano_id: number;
+  percentual: number;
+}
+
+export interface Cupom {
+  id: number;
+  codigo: string;
+  nome: string;
+  percentual: number;
+  valido_ate: string | null;
+  ativo: boolean;
+  is_campanha: boolean;
+  /** true = vale pra todos os planos; false = só pros planos em `planos`. */
+  aplica_todos: boolean;
+  planos: CupomPlanoRegra[];
+  /** Quantas vezes o cupom já foi usado. */
+  usos: number;
+  /** Limite total de usos (null = ilimitado). */
+  max_usos: number | null;
+  created_at?: string | null;
+}
+
+export interface CupomPayload {
+  codigo: string;
+  nome: string;
+  percentual: number;
+  valido_ate: string;
+  ativo: boolean;
+  /** Limite total de usos (null/0 = ilimitado). */
+  max_usos: number | null;
+  /** Vazio = todos os planos. Com itens = só esses planos (% por plano). */
+  planos: CupomPlanoRegra[];
+}
+
+/** Resultado da validacao de cupom no checkout (preview do desconto). */
+export interface CupomValidacao {
+  codigo: string;
+  percentual: number;
+  desconto: number;
+  valor_original: number;
+  valor_final: number;
+}
+
+// ===== Solicitação de molde sob encomenda (página pública) =====
+export interface SolicitacaoConfigPublic {
+  valor_metro: number;
+  video_url: string | null;
+  whatsapp?: string | null;
+  mp_public_key?: string | null;
+  /** false = admin desligou a página de solicitação de molde. */
+  ativo?: boolean;
+  /** Só true em ambiente local: habilita o botão de simular pagamento. */
+  dev_mode?: boolean;
+}
+
+export type SolicitacaoStatus = 'aguardando_pagamento' | 'pago' | 'entregue';
+
+export interface SolicitacaoPedido {
+  id: number;
+  modelo_key: string | null;
+  categoria: string | null;
+  modelo_nome: string;
+  tamanho_cm: number;
+  gomos: number;
+  bainha_cm: number;
+  valor: number;
+  email: string;
+  status: SolicitacaoStatus;
+  public_token: string;
+  chave_unica: string | null;
+  qr_code: string | null;
+  qr_code_base64: string | null;
+  created_at?: string | null;
+  paid_at?: string | null;
+}
+
+export interface AdminSolicitacaoConfig {
+  valor_metro: number;
+  video_url: string | null;
+  ativo?: boolean;
+}
+
+/** Consulta de chave pelo admin: mostra se o molde foi entregue e qual é. */
+export interface SolicitacaoChaveConsulta {
+  chave: string;
+  status: SolicitacaoStatus;
+  entregue: boolean;
+  modelo_nome: string;
+  categoria: string | null;
+  tamanho_cm: number;
+  gomos: number;
+  bainha_cm: number;
+  valor: number;
+  email: string;
+  created_at?: string | null;
+  paid_at?: string | null;
+  entregue_at?: string | null;
+}
+
+export interface WhatsAppConversation {
+  id: number;
+  remote_jid: string;
+  contact_name: string | null;
+  phone: string | null;
+  last_message_preview: string | null;
+  last_message_at: string | null;
+  last_direction: 'in' | 'out' | null;
+  unread_count: number;
+  bot_paused?: boolean | number;
+  created_at: string;
+}
+
+export interface WhatsAppMessage {
+  id: number;
+  conversation_id: number;
+  wa_message_id: string | null;
+  direction: 'in' | 'out';
+  body: string | null;
+  status: string | null;
+  created_at: string;
+}
+
+export interface ChatbotFlowOption {
+  id: string;
+  label: string;
+  matchKeywords?: string;
+}
+
+export interface ChatbotFlowNodeData {
+  text: string;
+  options?: ChatbotFlowOption[];
+  /** So no de mensagem: espera esse tempo (segundos) mostrando "digitando..." antes de mandar. */
+  typingDelaySec?: number;
+}
+
+export type ChatbotFlowNodeType = 'message' | 'question' | 'end' | 'identify' | 'plans' | 'handoff';
+
+export interface ChatbotFlowNode {
+  id: string;
+  type: ChatbotFlowNodeType;
+  position: { x: number; y: number };
+  data: ChatbotFlowNodeData;
+}
+
+export interface ChatbotFlowEdge {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
+}
+
+export interface ChatbotFlowGraph {
+  nodes: ChatbotFlowNode[];
+  edges: ChatbotFlowEdge[];
+}
+
+export interface ChatbotFlowSummary {
+  id: number;
+  name: string;
+  trigger_keyword: string | null;
+  is_active: boolean | number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatbotFlowDetail extends ChatbotFlowSummary {
+  flow: ChatbotFlowGraph;
 }
 
 export interface Comunicado {

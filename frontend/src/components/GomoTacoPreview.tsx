@@ -27,6 +27,13 @@ interface GomoTacoPreviewProps {
   /** Sem barra de zoom/pan — so o SVG, escalando pelo container (uso em cards/miniaturas). */
   compact?: boolean;
   bainhaCm?: number;
+  /**
+   * true = completa a ultima parte ate o fim da secao (uso final: PDF, peca
+   * separada, galeria de projetos salvos). false = mostra so o que foi
+   * configurado ate agora, sem completar sozinho (uso: editor ao vivo, pra
+   * o desenho bater exatamente com os campos que o cliente esta digitando).
+   */
+  fillDeficit?: boolean;
 }
 
 const ZOOM_MIN = 25;
@@ -54,11 +61,12 @@ export function GomoTacoPreview({
   tacoConfigs,
   sectionRatios = DEFAULT_SECTION_RATIOS,
   compact = false,
+  fillDeficit = true,
 }: GomoTacoPreviewProps) {
   const resolvedTacoConfigs = tacoConfigs ?? createDefaultTacoConfigs(1);
   const profile = useMemo(
-    () => buildMoldProfile(pontos, sectionRatios, resolvedTacoConfigs),
-    [pontos, sectionRatios, resolvedTacoConfigs]
+    () => buildMoldProfile(pontos, sectionRatios, resolvedTacoConfigs, fillDeficit),
+    [pontos, sectionRatios, resolvedTacoConfigs, fillDeficit]
   );
   const [zoom, setZoom] = useState(FIT_ZOOM);
   const [isPanning, setIsPanning] = useState(false);
@@ -211,6 +219,7 @@ export function GomoTacoPreview({
           className={className}
           showDetails={showDetails}
           tacoConfigs={resolvedTacoConfigs}
+          fillDeficit={fillDeficit}
         />
       </div>
     );
@@ -278,6 +287,7 @@ export function GomoTacoPreview({
             className={className}
             showDetails={showDetails}
             tacoConfigs={resolvedTacoConfigs}
+            fillDeficit={fillDeficit}
           />
         </div>
       </div>
@@ -296,6 +306,7 @@ export function GomoSvgTrueScale({
   tacoConfigs,
   monochrome = false,
   bainhaCm = 1.0,
+  fillDeficit = true,
 }: {
   profile: MoldProfile;
   className?: string;
@@ -304,6 +315,8 @@ export function GomoSvgTrueScale({
   /** Peca em branco (so contorno + grade + bainhas) — para impressao/corte, sem preenchimento colorido. */
   monochrome?: boolean;
   bainhaCm?: number;
+  /** true = completa a ultima parte ate o fim da secao (uso final). false = so o que foi configurado (editor ao vivo). */
+  fillDeficit?: boolean;
 }) {
   const { points, alturaTotalCm, larguraMaximaCm, secoes } = profile;
   const maxHalf = Math.max(larguraMaximaCm / 2, 0.1);
@@ -347,7 +360,7 @@ export function GomoSvgTrueScale({
 
   const sectionPaths = secoes.flatMap((secao) => {
     const cfg = tacoConfigs[secao.id] ?? { partitions: [] };
-    const bands = expandSectionPartitions(secao, cfg);
+    const bands = expandSectionPartitions(secao, cfg, fillDeficit);
     return bands.map((band, bandIndexInParent) => {
       const raw = buildTacoDivisions(band, band.flatConfig, points, bainhaCm);
       const divisions = {

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { CheckCircle2, Loader2, Send, X } from 'lucide-react';
 import { buildMoldPdf } from '../lib/moldPdf';
+import { buildMoldTiledPdf } from '../lib/moldTiledPdf';
 import { ApiError, sendProjectEmail } from '../lib/api';
 import { slugifyFilename } from '../lib/pdfExport';
 import { useAuth } from '../lib/auth';
@@ -48,13 +49,24 @@ export function SendEmailModal({ project, onClose }: SendEmailModalProps) {
         clientName: clientName.trim() || undefined,
         message: message.trim() || undefined,
       });
-      const filename = `${slugifyFilename(project.display_nome)}.pdf`;
+      const tiledOptions = {
+        nome: project.nome,
+        modelo: project.modelo,
+        bainhaCm: project.bainha_cm,
+        pontos: project.pontos,
+        plotterConfig: project.plotter_config,
+      };
+      const blobA4 = buildMoldTiledPdf(tiledOptions, 'a4');
+      const blobA3 = buildMoldTiledPdf(tiledOptions, 'a3');
+      const baseName = slugifyFilename(project.display_nome);
 
       const formData = new FormData();
       formData.append('client_email', email);
       formData.append('client_name', clientName.trim());
       formData.append('message', message.trim());
-      formData.append('pdf', blob, filename);
+      formData.append('pdf', blob, `${baseName}.pdf`);
+      formData.append('pdf_a4', blobA4, `${baseName}-a4.pdf`);
+      formData.append('pdf_a3', blobA3, `${baseName}-a3.pdf`);
 
       await sendProjectEmail(project.id, formData, token);
       setSuccess(true);
@@ -71,7 +83,10 @@ export function SendEmailModal({ project, onClose }: SendEmailModalProps) {
         <div className="pieces-modal-header">
           <div>
             <h2>Enviar por email — {project.display_nome}</h2>
-            <p>O cliente recebe um PDF organizado com nome, modelo, tamanho e a quantidade de tacos de cada parte.</p>
+            <p>
+              O cliente recebe 3 PDFs: o molde completo (peca por peca), e mais 2 versoes fatiadas — em folhas A4 e A3 — numeradas
+              e com seta de orientacao, pra quem nao tem plotter conseguir montar em casa.
+            </p>
           </div>
           <button type="button" className="pieces-modal-close" onClick={onClose} aria-label="Fechar">
             <X size={20} />

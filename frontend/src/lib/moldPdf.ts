@@ -111,7 +111,8 @@ function drawProfile(
 
   const sectionBands = secoes.flatMap((secao) => {
     const cfg = tacoConfigs[secao.id] ?? { partitions: [] };
-    const bands = expandSectionPartitions(secao, cfg);
+    // fillDeficit=true: o PDF final tem que sair completo, sem sobra em branco.
+    const bands = expandSectionPartitions(secao, cfg, true);
     return bands.map((band, bandIndexInParent) => {
       const raw = buildTacoDivisions(band, band.flatConfig, points, bainhaCm);
       const divisions = {
@@ -322,7 +323,7 @@ function drawCaption(doc: jsPDF, pageWidthCm: number, color: string, title: stri
 }
 
 function pieceSubtitle(piece: SeparatedPiece): string {
-  return `${formatCm(piece.alturaCm)} · ${piece.tacosPorGomo} tacos/gomo · taco ${Math.floor(piece.alturaTacoCm)} cm · total ${piece.totalTacos} tacos`;
+  return `${formatCm(piece.alturaCm)} · ${piece.tacosPorGomo} tacos/gomo · taco ${formatCm(piece.alturaTacoCm)} · total ${piece.totalTacos} tacos`;
 }
 
 /**
@@ -469,7 +470,7 @@ function renderInfoPage(
       doc.setTextColor(...TEXT_BODY);
       doc.text(formatCm(piece.alturaCm), contentX + colW, rowY);
       doc.text(String(piece.tacosPorGomo), contentX + colW * 2, rowY);
-      doc.text(`${Math.floor(piece.alturaTacoCm)} cm`, contentX + colW * 3, rowY);
+      doc.text(formatCm(piece.alturaTacoCm), contentX + colW * 3, rowY);
       doc.setFont('helvetica', 'bold');
       doc.text(`${piece.totalTacos} tacos`, contentX + colW * 4, rowY);
       y += 0.55;
@@ -662,7 +663,7 @@ export function buildMoldPdf(options: MoldPdfOptions): Blob {
     options.plotterConfig.section_colors,
     options.bainhaCm
   );
-  const fullProfile = showWhole ? buildMoldProfile(options.pontos, options.plotterConfig.section_ratios, options.plotterConfig.taco_configs) : null;
+  const fullProfile = showWhole ? buildMoldProfile(options.pontos, options.plotterConfig.section_ratios, options.plotterConfig.taco_configs, true) : null;
   const totals = computeSectionTacoTotals(
     options.pontos,
     options.plotterConfig.taco_configs,

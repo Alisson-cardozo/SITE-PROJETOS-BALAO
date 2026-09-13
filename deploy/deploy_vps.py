@@ -22,15 +22,26 @@ LOCAL_ROOT = Path(__file__).resolve().parents[1]  # sistema-novo
 def ssh_connect() -> paramiko.SSHClient:
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(
-        HOST,
-        username=USER,
-        password=PASSWORD,
-        timeout=20,
-        allow_agent=False,
-        look_for_keys=False,
-    )
+    key_file = os.path.expanduser('~/.ssh/studyia_deploy_ed25519')
+    if os.path.exists(key_file):
+        client.connect(
+            HOST,
+            username=USER,
+            key_filename=key_file,
+            timeout=20,
+            allow_agent=False,
+        )
+    else:
+        client.connect(
+            HOST,
+            username=USER,
+            password=PASSWORD,
+            timeout=20,
+            allow_agent=False,
+            look_for_keys=False,
+        )
     return client
+
 
 
 def run(client: paramiko.SSHClient, cmd: str, check: bool = True) -> str:

@@ -29,6 +29,9 @@ export interface BandeiraPdfOptions {
   /** Tamanho do taco (cm) usado pra calcular a coluna de tacos/folhas por
    * cor na tabela da capa (aba Contagem de folha). */
   tacoSizeCm: number;
+  /** Desenha o numero de cada cor em cima dos tacos (aba Numerar). Quando
+   * false, o desenho sai limpo, sem numeros na grade. */
+  showNumbers: boolean;
 }
 
 const INFO_WIDTH_CM = 19;
@@ -199,7 +202,9 @@ function addBandeiraPage(doc: jsPDF, options: BandeiraPdfOptions, region: PixelR
   if (options.showCoarseGrid && options.coarseCols > 0 && options.coarseRows > 0) {
     drawCoarseGridOverlay(doc, region, options.coarseCols, options.coarseRows, options.coarseGridColor, cellCm, originX, originY);
   }
-  drawTacoNumbers(doc, options.colors, options.gridWidth, region, colorNumberMap, cellCm, originX, originY);
+  if (options.showNumbers) {
+    drawTacoNumbers(doc, options.colors, options.gridWidth, region, colorNumberMap, cellCm, originX, originY);
+  }
 }
 
 /** Desenha o cabecalho + stats + tabela de cores (com o numero de cada cor,

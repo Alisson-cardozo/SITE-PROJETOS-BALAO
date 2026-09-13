@@ -27,7 +27,7 @@ final class SystemSettingsController
         $data = [];
         $errors = [];
 
-        foreach (['telegram', 'instagram', 'whatsapp'] as $field) {
+        foreach (['telegram', 'instagram', 'whatsapp', 'youtube'] as $field) {
             if ($request->input($field) === null) {
                 continue;
             }
@@ -37,6 +37,10 @@ final class SystemSettingsController
                 continue;
             }
             $data[$field] = $value === '' ? null : $value;
+        }
+
+        if ($request->input('phone_validation_required') !== null) {
+            $data['phone_validation_required'] = (bool) $request->input('phone_validation_required');
         }
 
         $hiddenNavItems = $request->input('hidden_nav_items');
@@ -117,6 +121,24 @@ final class SystemSettingsController
                     $data['tutorials'] = $clean;
                 }
             }
+        }
+
+        if ($request->input('no_plan_msg_enabled') !== null) {
+            $data['no_plan_msg_enabled'] = (bool) $request->input('no_plan_msg_enabled');
+        }
+        if ($request->input('no_plan_msg_text') !== null) {
+            $value = trim((string) $request->input('no_plan_msg_text'));
+            if (mb_strlen($value) > 1000) {
+                $errors['no_plan_msg_text'] = 'Mensagem muito longa (max. 1000 caracteres).';
+            } else {
+                $data['no_plan_msg_text'] = $value === '' ? null : $value;
+            }
+        }
+        if ($request->input('no_plan_msg_delay_min') !== null) {
+            $data['no_plan_msg_delay_min'] = max(1, (int) $request->input('no_plan_msg_delay_min'));
+        }
+        if ($request->input('no_plan_msg_repeat_min') !== null) {
+            $data['no_plan_msg_repeat_min'] = max(1, (int) $request->input('no_plan_msg_repeat_min'));
         }
 
         if ($errors !== []) {

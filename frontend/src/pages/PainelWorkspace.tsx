@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Circle, Download, Droplet, FileImage, FolderOpen, Grid3x3, Hand, Hash, ImagePlus, Layers, Loader2, Maximize2, Palette, Pencil, Send, Square, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
-import { buildColorSummary, CM_POR_PIXEL, readBandeiraNativePixelGrid, replaceColorInGrid, snapNearBlackToBlack, type BandeiraColorSummaryEntry } from '../lib/bandeiraImage';
+import { CheckCircle2, Circle, Download, Droplet, FileImage, FolderOpen, Grid3x3, Hand, Hash, ImagePlus, Layers, Loader2, Maximize2, Palette, Pencil, Send, Square, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { buildColorSummary, CM_POR_PIXEL, readBandeiraNativePixelGrid, renderGridToAnnotatedCanvas, renderGridToCleanCanvas, replaceColorInGrid, snapNearBlackToBlack, type BandeiraColorSummaryEntry } from '../lib/bandeiraImage';
 import { reduceBandeiraPalette } from '../lib/bandeiraImage';
 import { findClosestCatalogColor } from '../lib/bandeiraColors';
 import { hexToRgb } from '../lib/colorMath';
@@ -12,6 +12,7 @@ import {
   malhaGridSizeExceedsLimit,
   readPainelSourceImage,
   type MalhaSize,
+  type VetorizacaoIntensidade,
 } from '../lib/painelImage';
 import { buildPainelPdf, type PainelDisplayMode, type PainelDivisionMode } from '../lib/painelPdf';
 import { downloadBlob, downloadCanvasAsPng, slugifyFilename } from '../lib/pdfExport';
@@ -57,7 +58,15 @@ function computeCellBasePx(gridWidth: number, gridHeight: number): number {
   return Math.max(1, Math.min(CELL_BASE_PX_DEFAULT, maxCellPxAtMaxZoom));
 }
 
-export function PainelWorkspace() {
+interface PainelWorkspaceProps {
+  /** Imagem vinda de outra aba (ex: "Reduzir Imagem HD" → "Usar na aba
+   * Painel") — entra direto no recorte, como se o cliente tivesse acabado de
+   * escolher esse arquivo. So usada 1x, no primeiro mount. */
+  initialFile?: File | null;
+  onInitialFileConsumed?: () => void;
+}
+
+export function PainelWorkspace({ initialFile, onInitialFileConsumed }: PainelWorkspaceProps = {}) {
   const draftData = (() => {
     try {
       const saved = window.localStorage.getItem('sistema-novo:draft:painel');
@@ -70,7 +79,13 @@ export function PainelWorkspace() {
   const [file, setFile] = useState<File | null>(null);
   /** Arquivo recem-escolhido, aguardando o recorte (ver ImageCropModal) antes
    * de virar `file` de verdade e liberar o painel "Criar projeto". */
-  const [pendingCropFile, setPendingCropFile] = useState<File | null>(null);
+  const [pendingCropFile, setPendingCropFile] = useState<File | null>(() => initialFile ?? null);
+
+  useEffect(() => {
+    if (initialFile) onInitialFileConsumed?.();
+    // so na 1a montagem — initialFile e "consumido" 1x so.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [showCreatePanel, setShowCreatePanel] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +98,9 @@ export function PainelWorkspace() {
   const [taqueado, setTaqueado] = useState(() => draftData?.taqueado ?? false);
 
   const [targetColorCount, setTargetColorCount] = useState(() => draftData?.targetColorCount ?? 16);
+  /** Detalhe usado na vetorizacao antes de taquear pra malha — opcional, o
+   * cliente so mexe se quiser um resultado mais simplificado/suavizado. */
+  const [vetorIntensidade, setVetorIntensidade] = useState<VetorizacaoIntensidade>(() => draftData?.vetorIntensidade ?? 'alta');
   const [reducing, setReducing] = useState(false);
 
   const [selectedColor, setSelectedColor] = useState<string | null>(null);
@@ -92,7 +110,7 @@ export function PainelWorkspace() {
 
   const [tool, setTool] = useState<Tool>('mover');
   const [zoom, setZoom] = useState(100);
-  const [showFineGrid, setShowFineGrid] = useState(true);
+  const [showFineGrid, setShowFineGrid] = useState(false);
   const [fineGridColor, setFineGridColor] = useState(DEFAULT_FINE_GRID_COLOR);
   const [showDivisionGrid, setShowDivisionGrid] = useState(false);
   const [divisionCols, setDivisionCols] = useState(DEFAULT_DIVISION_COLS);
@@ -120,6 +138,8 @@ export function PainelWorkspace() {
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const rulerTopRef = useRef<HTMLCanvasElement>(null);
+  const rulerLeftRef = useRef<HTMLCanvasElement>(null);
   const paintingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const panRef = useRef<{
@@ -134,10 +154,14 @@ export function PainelWorkspace() {
   const paintedDuringGestureRef = useRef(false);
   const historyRef = useRef<string[][]>([]);
   const [undoCount, setUndoCount] = useState(0);
-  /** Grade vetorizada (antes do taqueamento pra malha) — congelada no momento
-   * do "Taquear", pra dar pra voltar e reajustar malha/tamanho sem perder o
-   * trabalho de reducao/ajuste de cor feito na vetorizacao. */
-  const vetorSnapshotRef = useRef<{ colors: string[]; width: number; height: number } | null>(null);
+
+  /** Grade base (cores originais, sem reduzir) usada so pro preview em tempo
+   * real do painel "Criar projeto" — numa resolucao pequena e fixa, pra
+   * recalcular a reducao de cor a cada digito sem travar. Refeita so quando o
+   * arquivo muda (independe de malha/tamanho, que so entram no "Taquear"). */
+  const [previewBase, setPreviewBase] = useState<{ widthPx: number; heightPx: number; colors: string[] } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const cellBasePx = useMemo(() => computeCellBasePx(gridWidth, gridHeight), [gridWidth, gridHeight]);
 
@@ -195,6 +219,95 @@ export function PainelWorkspace() {
     [larguraCm, alturaCm, malhaCm]
   );
   const exceedsMalhaLimit = malhaGridSizeExceedsLimit(malhaGridSize);
+
+  // Recarrega a grade base do preview quando o arquivo ou a intensidade de
+  // vetorizacao mudam — usa a MESMA funcao/resolucao do "Vetorizar imagem"
+  // de verdade, pra ser fiel ao resultado real.
+  useEffect(() => {
+    if (!file || !showCreatePanel) {
+      setPreviewBase(null);
+      return;
+    }
+    let cancelled = false;
+    setPreviewLoading(true);
+    readPainelSourceImage(file, vetorIntensidade)
+      .then((grid) => {
+        if (!cancelled) setPreviewBase(grid);
+      })
+      .catch(() => {
+        if (!cancelled) setPreviewBase(null);
+      })
+      .finally(() => {
+        if (!cancelled) setPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [file, showCreatePanel, vetorIntensidade]);
+
+  /** Aplica a mesma reducao de cor que "Vetorizar imagem" vai usar, mas em
+   * cima da grade do preview — reage na hora a quantidade de cores. */
+  const previewVetorizedColors = useMemo(() => {
+    if (!previewBase) {
+      return null;
+    }
+    const distinctCount = buildColorSummary(previewBase.colors).length;
+    return targetColorCount > 0 && targetColorCount < distinctCount
+      ? reduceBandeiraPalette(previewBase.colors, targetColorCount)
+      : previewBase.colors;
+  }, [previewBase, targetColorCount]);
+
+  /** Taqueia o preview pra malha (mesma funcao/metodo de "Taquear pra
+   * malha" de verdade — moda, sem misturar cor) — assim o preview ja mostra
+   * o projeto no tamanho FINAL (ex: 100x150 modulos), nao a vetorizada
+   * inteira. Com um pequeno debounce, ja que largura/altura mudam a cada
+   * tecla digitada. */
+  const [previewMalha, setPreviewMalha] = useState<{ widthPx: number; heightPx: number; colors: string[] } | null>(null);
+  useEffect(() => {
+    if (!previewBase || !previewVetorizedColors || malhaGridSize.widthPx === 0 || malhaGridSize.heightPx === 0) {
+      setPreviewMalha(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      const final = downsampleColorGrid(
+        previewVetorizedColors,
+        previewBase.widthPx,
+        previewBase.heightPx,
+        malhaGridSize.widthPx,
+        malhaGridSize.heightPx
+      );
+      setPreviewMalha({ widthPx: malhaGridSize.widthPx, heightPx: malhaGridSize.heightPx, colors: final });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [previewBase, previewVetorizedColors, malhaGridSize.widthPx, malhaGridSize.heightPx]);
+
+  // Desenha o preview (ja no tamanho final de malha) num canvas pequeno, celula a celula.
+  useEffect(() => {
+    const canvas = previewCanvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+    if (!previewMalha) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+    const boxSize = 220;
+    const cellPx = Math.max(1, Math.min(boxSize / previewMalha.widthPx, boxSize / previewMalha.heightPx));
+    const width = Math.max(1, Math.round(previewMalha.widthPx * cellPx));
+    const height = Math.max(1, Math.round(previewMalha.heightPx * cellPx));
+    canvas.width = width;
+    canvas.height = height;
+    for (let y = 0; y < previewMalha.heightPx; y += 1) {
+      for (let x = 0; x < previewMalha.widthPx; x += 1) {
+        ctx.fillStyle = previewMalha.colors[y * previewMalha.widthPx + x];
+        ctx.fillRect(x * cellPx, y * cellPx, cellPx + 0.5, cellPx + 0.5);
+      }
+    }
+  }, [previewMalha]);
 
   /** Todas as cores da grade (inclui preto) — usada pra editar (Cores). */
   const colorSummary: BandeiraColorSummaryEntry[] = useMemo(() => (colors ? buildColorSummary(colors) : []), [colors]);
@@ -257,9 +370,10 @@ export function PainelWorkspace() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
-  /** Le a imagem numa resolucao de trabalho alta (nao e a grade final ainda)
-   * — malha e tamanho real ja foram escolhidos no painel "Criar projeto", a
-   * partir daqui o usuario so reduz/ajusta cor antes de taquear. */
+  /** Le a imagem numa resolucao de trabalho alta, reduz cor e ja taqueia pra
+   * grade final de malha — malha e tamanho real ja foram escolhidos e
+   * conferidos no preview do painel "Criar projeto", entao o resultado ja
+   * sai pronto (sem precisar de um segundo "Taquear pra malha" depois). */
   async function handleVetorizar() {
     if (!file || !larguraCm || !alturaCm || exceedsMalhaLimit || loading) {
       return;
@@ -267,16 +381,18 @@ export function PainelWorkspace() {
     setLoading(true);
     setError(null);
     try {
-      const grid = await readPainelSourceImage(file);
+      const grid = await readPainelSourceImage(file, vetorIntensidade);
       const distinctCount = buildColorSummary(grid.colors).length;
-      const finalColors =
+      const vetorizedColors =
         targetColorCount > 0 && targetColorCount < distinctCount
           ? reduceBandeiraPalette(grid.colors, targetColorCount)
           : grid.colors;
-      setGridWidth(grid.widthPx);
-      setGridHeight(grid.heightPx);
-      setColors(snapNearBlackToBlack(finalColors));
-      setTaqueado(false);
+      const target = malhaGridSize;
+      const final = downsampleColorGrid(vetorizedColors, grid.widthPx, grid.heightPx, target.widthPx, target.heightPx);
+      setGridWidth(target.widthPx);
+      setGridHeight(target.heightPx);
+      setColors(snapNearBlackToBlack(final));
+      setTaqueado(true);
       setSelectedColor(null);
       setShowCreatePanel(false);
       historyRef.current = [];
@@ -284,7 +400,7 @@ export function PainelWorkspace() {
       if (!nome) {
         setNome(file.name.replace(/\.[^.]+$/, ''));
       }
-      requestAnimationFrame(() => fitZoomToStage(grid.widthPx, grid.heightPx));
+      requestAnimationFrame(() => fitZoomToStage(target.widthPx, target.heightPx));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nao foi possivel vetorizar a imagem.');
     } finally {
@@ -334,27 +450,6 @@ export function PainelWorkspace() {
       setLoading(false);
     }
   }
-
-  /** "Taquear": pixeliza a arte vetorizada (ja editada) pra grade final de
-   * malha — congela a vetorizada num snapshot antes, pra dar pra voltar. */
-  function handleTaquear() {
-    if (!colors || !larguraCm || !alturaCm || exceedsMalhaLimit || gridWidth === 0 || gridHeight === 0) {
-      return;
-    }
-    vetorSnapshotRef.current = { colors, width: gridWidth, height: gridHeight };
-    const target = malhaGridSize;
-    const final = downsampleColorGrid(colors, gridWidth, gridHeight, target.widthPx, target.heightPx);
-    setGridWidth(target.widthPx);
-    setGridHeight(target.heightPx);
-    setColors(snapNearBlackToBlack(final));
-    setTaqueado(true);
-    setSelectedColor(null);
-    historyRef.current = [];
-    setUndoCount(0);
-    requestAnimationFrame(() => fitZoomToStage(target.widthPx, target.heightPx));
-  }
-
-
 
   function handleReduceColors() {
     if (!colors || reducing) {
@@ -662,6 +757,104 @@ export function PainelWorkspace() {
     colorNumberMap,
   ]);
 
+  /** Desenha a regua de cima (colunas) e da lateral (linhas) — numera os
+   * modulos, acompanhando o scroll/zoom do palco (redesenha a cada scroll,
+   * resize da janela ou mudanca de zoom/grade). */
+  const RULER_SIZE = 22;
+  /** Mesmo valor do `padding` de `.bandeira-canvas-stage` no CSS — o canvas
+   * comeca depois desse respiro, entao a regua precisa somar isso pra alinhar
+   * os tracinhos com as celulas de verdade. */
+  const STAGE_PADDING_PX = 16;
+  const drawRulers = useCallback(() => {
+    const stage = stageRef.current;
+    const topCanvas = rulerTopRef.current;
+    const leftCanvas = rulerLeftRef.current;
+    if (!stage || !topCanvas || !leftCanvas) {
+      return;
+    }
+    const viewWidth = stage.clientWidth;
+    const viewHeight = stage.clientHeight;
+    topCanvas.width = viewWidth;
+    topCanvas.height = RULER_SIZE;
+    leftCanvas.width = RULER_SIZE;
+    leftCanvas.height = viewHeight;
+    const topCtx = topCanvas.getContext('2d');
+    const leftCtx = leftCanvas.getContext('2d');
+    if (!topCtx || !leftCtx) {
+      return;
+    }
+    topCtx.clearRect(0, 0, viewWidth, RULER_SIZE);
+    leftCtx.clearRect(0, 0, RULER_SIZE, viewHeight);
+    if (gridWidth === 0 || gridHeight === 0) {
+      return;
+    }
+    const cellPx = cellBasePx * (zoom / 100);
+    const scrollLeft = stage.scrollLeft;
+    const scrollTop = stage.scrollTop;
+
+    // passo adaptativo pro numero nao ficar espremido/sobreposto em zoom baixo
+    const niceSteps = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500];
+    const minStep = Math.max(1, 42 / Math.max(cellPx, 0.01));
+    const step = niceSteps.find((s) => s >= minStep) ?? niceSteps[niceSteps.length - 1];
+
+    topCtx.font = '10px sans-serif';
+    topCtx.textBaseline = 'top';
+    const firstCol = Math.max(0, Math.floor((scrollLeft - STAGE_PADDING_PX) / cellPx));
+    const lastCol = Math.min(gridWidth, Math.ceil((scrollLeft - STAGE_PADDING_PX + viewWidth) / cellPx));
+    for (let col = firstCol; col <= lastCol; col += 1) {
+      const x = Math.round(col * cellPx - scrollLeft + STAGE_PADDING_PX);
+      const major = col % step === 0;
+      topCtx.strokeStyle = major ? '#8fa3bd' : '#3a4d6b';
+      topCtx.beginPath();
+      topCtx.moveTo(x + 0.5, RULER_SIZE - (major ? 9 : 4));
+      topCtx.lineTo(x + 0.5, RULER_SIZE);
+      topCtx.stroke();
+      if (major) {
+        topCtx.fillStyle = '#b7c6db';
+        topCtx.fillText(String(col), x + 2, 1);
+      }
+    }
+
+    leftCtx.font = '10px sans-serif';
+    leftCtx.textBaseline = 'top';
+    const firstRow = Math.max(0, Math.floor((scrollTop - STAGE_PADDING_PX) / cellPx));
+    const lastRow = Math.min(gridHeight, Math.ceil((scrollTop - STAGE_PADDING_PX + viewHeight) / cellPx));
+    for (let row = firstRow; row <= lastRow; row += 1) {
+      const y = Math.round(row * cellPx - scrollTop + STAGE_PADDING_PX);
+      const major = row % step === 0;
+      leftCtx.strokeStyle = major ? '#8fa3bd' : '#3a4d6b';
+      leftCtx.beginPath();
+      leftCtx.moveTo(RULER_SIZE - (major ? 9 : 4), y + 0.5);
+      leftCtx.lineTo(RULER_SIZE, y + 0.5);
+      leftCtx.stroke();
+      if (major) {
+        leftCtx.save();
+        leftCtx.translate(2, y + 2);
+        leftCtx.fillStyle = '#b7c6db';
+        leftCtx.fillText(String(row), 0, 0);
+        leftCtx.restore();
+      }
+    }
+  }, [gridWidth, gridHeight, zoom, cellBasePx]);
+
+  useEffect(() => {
+    drawRulers();
+  }, [drawRulers]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) {
+      return;
+    }
+    const onScroll = () => drawRulers();
+    stage.addEventListener('scroll', onScroll);
+    window.addEventListener('resize', onScroll);
+    return () => {
+      stage.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [drawRulers]);
+
   /** Monta o PDF (capa com tabela numerada, sem preto + folha inteira/
    * dividida no modo quadrado ou bolinha) — usado pelo "Baixar PDF" e pelo
    * "Enviar por email". */
@@ -683,6 +876,7 @@ export function PainelWorkspace() {
       divisionGridColor,
       divisionCols,
       divisionRows,
+      showNumbers,
     });
   }
 
@@ -705,8 +899,24 @@ export function PainelWorkspace() {
   }
 
   function handleDownloadPng() {
-    const canvas = canvasRef.current;
-    if (!canvas || !colors) return;
+    if (!colors || gridWidth === 0 || gridHeight === 0) return;
+    const bolinha = taqueado && displayMode === 'bolinha';
+    const hasOverlay = showFineGrid || showDivisionGrid || showNumbers || bolinha;
+    const canvas = hasOverlay
+      ? renderGridToAnnotatedCanvas(colors, gridWidth, gridHeight, {
+          showFineGrid,
+          fineGridColor,
+          showNumbers,
+          colorNumberMap,
+          showCoarseGrid: showDivisionGrid,
+          coarseCols: divisionCols,
+          coarseRows: divisionRows,
+          coarseGridColor: divisionGridColor,
+          dotsMode: bolinha,
+          dotsBgColor: BOLINHA_BG_CSS,
+          dotsSkipHex: PAINEL_BLACK_HEX,
+        })
+      : renderGridToCleanCanvas(colors, gridWidth, gridHeight);
     const filename = `${slugifyFilename(nome || 'painel')}.png`;
     downloadCanvasAsPng(canvas, filename);
   }
@@ -721,16 +931,19 @@ export function PainelWorkspace() {
 
         {!colors ? (
           <div className="bandeira-upload-card">
-            <div className="bandeira-import-options-row">
-              <label className="mold-save-button bandeira-upload-label">
-                <ImagePlus size={16} />
-                {file ? `Imagem: ${file.name}` : 'Escolher imagem para taquear'}
-                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="bandeira-file-input" />
+            <div className="bandeira-upload-options">
+              <label className={`bandeira-upload-option bandeira-upload-option-primary${file ? ' has-file' : ''}`}>
+                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="bandeira-file-input-hidden" />
+                <span className="bandeira-upload-option-icon">
+                  {file ? <CheckCircle2 size={20} /> : <ImagePlus size={20} />}
+                </span>
+                <span className="bandeira-upload-option-text">
+                  <strong>{file ? file.name : 'Escolher imagem'}</strong>
+                  <small>{file ? 'Clique pra trocar a imagem' : 'Carregue uma foto ou desenho pra taquear'}</small>
+                </span>
               </label>
 
-              <label className="mold-secondary-button bandeira-upload-label" title="Pula tamanho e quantidade de cores — abre direto a tabela de cores pra editar">
-                <FolderOpen size={16} />
-                Importar Projeto Pronto
+              <label className="bandeira-upload-option" title="Pula tamanho e quantidade de cores — abre direto a tabela de cores pra editar">
                 <input
                   type="file"
                   accept="image/*,.json"
@@ -738,8 +951,15 @@ export function PainelWorkspace() {
                     const selected = e.target.files?.[0];
                     if (selected) void handleImportReadyProject(selected);
                   }}
-                  className="bandeira-file-input"
+                  className="bandeira-file-input-hidden"
                 />
+                <span className="bandeira-upload-option-icon">
+                  <FolderOpen size={20} />
+                </span>
+                <span className="bandeira-upload-option-text">
+                  <strong>Importe seu projeto pronto</strong>
+                  <small>Veja a tabela de cores, numere as cores e organize por grades</small>
+                </span>
               </label>
             </div>
 
@@ -804,11 +1024,37 @@ export function PainelWorkspace() {
                 )}
                 {exceedsMalhaLimit ? <p className="mold-import-error">Grade grande demais pra essa malha. Aumente a malha ou reduza o tamanho.</p> : null}
 
+                <div className="bandeira-preview-box">
+                  <canvas ref={previewCanvasRef} className="bandeira-preview-canvas" />
+                  {previewLoading ? (
+                    <div className="bandeira-preview-loading">
+                      <Loader2 size={16} className="mold-import-spinner" />
+                    </div>
+                  ) : null}
+                  {!previewMalha && !previewLoading ? (
+                    <p className="bandeira-preview-empty">Informe a malha e o tamanho pra ver o preview no tamanho final</p>
+                  ) : null}
+                </div>
+
                 <label className="auth-field">
                   <span>Quantidade de cores desejada</span>
                   <input type="number" min={2} {...numericFieldProps(targetColorCount, setTargetColorCount, 2)} />
                 </label>
-                <p className="bandeira-hint">Da pra ajustar a quantidade de cores de novo depois de vetorizar.</p>
+                <p className="bandeira-hint">
+                  O preview acima ja mostra o projeto no tamanho final de modulos (
+                  {malhaGridSize.widthPx} x {malhaGridSize.heightPx}) e muda em tempo real conforme vc ajusta malha, tamanho ou
+                  quantidade de cores.
+                </p>
+
+                <label className="auth-field">
+                  <span>Nitidez da vetorizacao (opcional)</span>
+                  <select value={vetorIntensidade} onChange={(e) => setVetorIntensidade(e.target.value as VetorizacaoIntensidade)}>
+                    <option value="baixa">Baixa (mais suave/simplificado)</option>
+                    <option value="media">Media</option>
+                    <option value="alta">Alta (padrao, mais fiel a foto)</option>
+                  </select>
+                </label>
+                <p className="bandeira-hint">Controla quanto detalhe da foto original entra antes de taquear pra malha.</p>
 
                 <button
                   type="button"
@@ -889,15 +1135,20 @@ export function PainelWorkspace() {
               </div>
             </div>
 
-            <div className="bandeira-canvas-stage" ref={stageRef}>
-              <canvas
-                ref={canvasRef}
-                className={`bandeira-canvas tool-${tool}`}
-                onPointerDown={handleCanvasPointerDown}
-                onPointerMove={handleCanvasPointerMove}
-                onPointerUp={stopPainting}
-                onContextMenu={(event) => event.preventDefault()}
-              />
+            <div className="bandeira-canvas-area">
+              <div className="bandeira-ruler-corner" />
+              <canvas ref={rulerTopRef} className="bandeira-ruler bandeira-ruler-top" />
+              <canvas ref={rulerLeftRef} className="bandeira-ruler bandeira-ruler-left" />
+              <div className="bandeira-canvas-stage" ref={stageRef}>
+                <canvas
+                  ref={canvasRef}
+                  className={`bandeira-canvas tool-${tool}`}
+                  onPointerDown={handleCanvasPointerDown}
+                  onPointerMove={handleCanvasPointerMove}
+                  onPointerUp={stopPainting}
+                  onContextMenu={(event) => event.preventDefault()}
+                />
+              </div>
             </div>
 
             <div className="bandeira-actions-row">
@@ -914,7 +1165,6 @@ export function PainelWorkspace() {
                   setFile(null);
                   setShowCreatePanel(false);
                   setTaqueado(false);
-                  vetorSnapshotRef.current = null;
                   if (fileInputRef.current) fileInputRef.current.value = '';
                 }}
               >
@@ -940,7 +1190,7 @@ export function PainelWorkspace() {
           </div>
           {!taqueado ? (
             <p className="bandeira-size-hint">
-              Essa e a resolucao de trabalho so pra editar as cores — nao e o tamanho final do painel. O tamanho real ({malhaCm}cm por malha) so vira grade quando voce clicar em "Taquear pra malha".
+              Essa e a resolucao de trabalho de um projeto antigo, ainda nao taqueado pra malha — troque a imagem pra criar um projeto novo (ja sai direto no tamanho final).
             </p>
           ) : null}
 
@@ -987,6 +1237,31 @@ export function PainelWorkspace() {
                   <div className="bandeira-replace-row">
                     <span className="bandeira-swatch" style={{ background: selectedColor }} />
                     <code>{selectedColor}</code>
+                  </div>
+
+                  {countableColorSummary.some((entry) => entry.hex !== selectedColor) ? (
+                    <>
+                      <p className="bandeira-hint">Trocar por uma cor que ja existe no projeto:</p>
+                      <div className="bandeira-existing-colors-list">
+                        {countableColorSummary
+                          .filter((entry) => entry.hex !== selectedColor)
+                          .map((entry) => (
+                            <button
+                              type="button"
+                              key={entry.hex}
+                              className={`bandeira-existing-color-swatch ${replaceTarget === entry.hex ? 'active' : ''}`}
+                              title={entry.name}
+                              onClick={() => setReplaceTarget(entry.hex)}
+                            >
+                              <span className="bandeira-swatch" style={{ background: entry.hex }} />
+                            </button>
+                          ))}
+                      </div>
+                    </>
+                  ) : null}
+
+                  <p className="bandeira-hint">Ou escolha outra cor:</p>
+                  <div className="bandeira-replace-row">
                     <input type="color" value={replaceTarget} onChange={(e) => setReplaceTarget(e.target.value)} />
                     <button type="button" className="mold-import-button" onClick={handleReplaceSelected}>
                       Trocar todas por essa cor
@@ -1019,63 +1294,6 @@ export function PainelWorkspace() {
                 ))}
               </div>
 
-              <h3>Malha e tamanho real</h3>
-              <p className="bandeira-hint">Escolha a malha e o tamanho real — depois de taquear, isso vira a grade final do painel.</p>
-              <div className="painel-malha-switch">
-                {MALHA_OPTIONS.map((value) => (
-                  <button key={value} type="button" className={malhaCm === value ? 'active' : ''} onClick={() => setMalhaCm(value)}>
-                    {value}cm
-                  </button>
-                ))}
-              </div>
-              <div className="bandeira-size-fields">
-                <label className="auth-field">
-                  <span>Largura</span>
-                  <input
-                    type="number"
-                    min={1}
-                    placeholder="Obrigatorio"
-                    value={larguraCm === '' ? '' : Number(larguraCm) / CM_POR_PIXEL}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      setLarguraCm(raw === '' ? '' : String(Math.max(1, Number(raw) || 1) * CM_POR_PIXEL));
-                    }}
-                  />
-                </label>
-                <label className="auth-field">
-                  <span>Altura</span>
-                  <input
-                    type="number"
-                    min={1}
-                    placeholder="Obrigatorio"
-                    value={alturaCm === '' ? '' : Number(alturaCm) / CM_POR_PIXEL}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      setAlturaCm(raw === '' ? '' : String(Math.max(1, Number(raw) || 1) * CM_POR_PIXEL));
-                    }}
-                  />
-                </label>
-              </div>
-              <p className="bandeira-hint">
-                Cada unidade equivale a <strong>{CM_POR_PIXEL}cm</strong> reais (1 metro = 10 unidades).
-              </p>
-              {larguraCm !== '' && alturaCm !== '' ? (
-                <p className="bandeira-hint">
-                  Malha de <strong>{malhaCm}cm</strong> em <strong>{formatCm(Number(larguraCm))} x {formatCm(Number(alturaCm))} cm</strong> vira uma
-                  grade de <strong>{malhaGridSize.widthPx} x {malhaGridSize.heightPx}</strong> modulos.
-                </p>
-              ) : null}
-              {exceedsMalhaLimit ? <p className="mold-import-error">Grade grande demais pra essa malha. Aumente a malha ou reduza o tamanho.</p> : null}
-
-              <button
-                type="button"
-                className="mold-save-button"
-                onClick={handleTaquear}
-                disabled={!larguraCm || !alturaCm || exceedsMalhaLimit}
-              >
-                <ImagePlus size={16} />
-                Taquear pra malha
-              </button>
             </>
           ) : (
             <>
@@ -1136,6 +1354,31 @@ export function PainelWorkspace() {
                       <div className="bandeira-replace-row">
                         <span className="bandeira-swatch" style={{ background: selectedColor }} />
                         <code>{selectedColor}</code>
+                      </div>
+
+                      {countableColorSummary.some((entry) => entry.hex !== selectedColor) ? (
+                        <>
+                          <p className="bandeira-hint">Trocar por uma cor que ja existe no projeto:</p>
+                          <div className="bandeira-existing-colors-list">
+                            {countableColorSummary
+                              .filter((entry) => entry.hex !== selectedColor)
+                              .map((entry) => (
+                                <button
+                                  type="button"
+                                  key={entry.hex}
+                                  className={`bandeira-existing-color-swatch ${replaceTarget === entry.hex ? 'active' : ''}`}
+                                  title={entry.name}
+                                  onClick={() => setReplaceTarget(entry.hex)}
+                                >
+                                  <span className="bandeira-swatch" style={{ background: entry.hex }} />
+                                </button>
+                              ))}
+                          </div>
+                        </>
+                      ) : null}
+
+                      <p className="bandeira-hint">Ou escolha outra cor:</p>
+                      <div className="bandeira-replace-row">
                         <input type="color" value={replaceTarget} onChange={(e) => setReplaceTarget(e.target.value)} />
                         <button type="button" className="mold-import-button" onClick={handleReplaceSelected}>
                           Trocar todas por essa cor

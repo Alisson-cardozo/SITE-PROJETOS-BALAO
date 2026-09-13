@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, Trash2, Users, DollarSign, CheckCircle2, Clock, Search, Filter } from 'lucide-react';
+import { Loader2, Trash2, Users, DollarSign, CheckCircle2, Clock, Search, Filter, Hammer } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { isExpired } from '../lib/access';
 import { useAuth } from '../lib/auth';
@@ -76,15 +76,18 @@ function UserRowActions({
     }
   };
 
-  const handleBlock = async () => {
+  const isBlocked = target.status === 'blocked';
+  const handleToggleBlock = async () => {
     if (!token) return;
+    const next = isBlocked ? 'active' : 'blocked';
+    if (!isBlocked && !window.confirm(`Bloquear o acesso de "${target.name}"?\n\nEle NÃO vai conseguir logar nem criar uma conta nova com o e-mail ${target.email}.`)) return;
     setError(null);
     setBusy(true);
     try {
-      const response = await api.adminUpdateUserStatus(target.id, 'blocked', token);
+      const response = await api.adminUpdateUserStatus(target.id, next, token);
       onChanged(response.data);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Nao foi possivel bloquear.');
+      setError(err instanceof ApiError ? err.message : 'Nao foi possivel alterar o bloqueio.');
     } finally {
       setBusy(false);
     }
@@ -369,30 +372,32 @@ function UserRowActions({
               {busy ? <Loader2 size={12} className="mold-import-spinner" /> : null}
               Remover acesso
             </button>
-            <button
-              type="button"
-              className="mold-secondary-button rifa-recusar-button"
-              onClick={() => void handleBlock()}
-              disabled={busy}
-              style={{
-                backgroundColor: '#e53e3e',
-                color: '#fff',
-                border: 'none',
-                padding: '6px 12px',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontWeight: 500,
-                fontSize: '13px'
-              }}
-            >
-              {busy ? <Loader2 size={12} className="mold-import-spinner" /> : null}
-              Bloquear
-            </button>
           </>
         )}
+
+        {/* Bloquear / Desbloquear (por conta + e-mail) — vale pra qualquer cliente */}
+        <button
+          type="button"
+          onClick={() => void handleToggleBlock()}
+          disabled={busy}
+          style={{
+            backgroundColor: isBlocked ? '#38a169' : '#e53e3e',
+            color: '#fff',
+            border: 'none',
+            padding: '6px 12px',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontWeight: 500,
+            fontSize: '13px'
+          }}
+          title={isBlocked ? 'Liberar o e-mail e a conta deste cliente' : 'Bloqueia a conta e o e-mail (não loga nem cria conta nova)'}
+        >
+          {busy ? <Loader2 size={12} className="mold-import-spinner" /> : null}
+          {isBlocked ? 'Desbloquear' : 'Bloquear'}
+        </button>
 
         {/* Botão de Trocar Senha */}
         <button
@@ -476,6 +481,9 @@ export function AdminUsersPage() {
     pending: 0,
     blocked: 0,
     monthly_billing: 0,
+    molds_sold_total: 0,
+    molds_billing: 0,
+    total_billing: 0,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -484,6 +492,51 @@ export function AdminUsersPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [planoFilter, setPlanoFilter] = useState('all');
+  const [pagamentoFilter, setPagamentoFilter] = useState('all'); // all | gerou_nao_pagou | ok
+  const [emailFilter, setEmailFilter] = useState('all'); // all | validado | nao_validado
+  const [roleFilter, setRoleFilter] = useState('all'); // all | admin | user
+  const [onlineFilter, setOnlineFilter] = useState('all'); // all | online | offline
+
+  // Blocklist de e-mails (bloqueio manual)
+  const [blockedEmails, setBlockedEmails] = useState<Array<{ id: number; email: string; motivo: string | null; created_at: string }>>([]);
+  const [showBlocklist, setShowBlocklist] = useState(false);
+  const [blockInput, setBlockInput] = useState('');
+  const [blockBusy, setBlockBusy] = useState(false);
+  const [blockErr, setBlockErr] = useState<string | null>(null);
+
+  const loadBlocklist = useCallback(async () => {
+    if (!token) return;
+    try {
+      const r = await api.adminListBlockedEmails(token);
+      setBlockedEmails(r.data);
+    } catch { /* silencioso */ }
+  }, [token]);
+
+  const handleBlockEmailManual = async () => {
+    if (!token) return;
+    const email = blockInput.trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setBlockErr('Informe um e-mail válido.'); return; }
+    setBlockBusy(true);
+    setBlockErr(null);
+    try {
+      await api.adminBlockEmail(email, token);
+      setBlockInput('');
+      await loadBlocklist();
+      await load();
+    } catch (err) {
+      setBlockErr(err instanceof ApiError ? err.message : 'Não foi possível bloquear.');
+    } finally {
+      setBlockBusy(false);
+    }
+  };
+
+  const handleUnblockEmail = async (email: string) => {
+    if (!token) return;
+    try {
+      await api.adminUnblockEmail(email, token);
+      await loadBlocklist();
+    } catch { /* silencioso */ }
+  };
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -492,7 +545,12 @@ export function AdminUsersPage() {
     try {
       const response = await api.adminListUsers(token);
       setUsers(response.data);
-      setStats(response.stats);
+      setStats({
+        ...response.stats,
+        molds_sold_total: response.stats.molds_sold_total ?? 0,
+        molds_billing: response.stats.molds_billing ?? 0,
+        total_billing: response.stats.total_billing ?? 0,
+      });
 
       // Carregar os planos na mesma request sequencial
       const planosResponse = await api.adminListPlanos(token);
@@ -506,7 +564,8 @@ export function AdminUsersPage() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadBlocklist();
+  }, [load, loadBlocklist]);
 
   const handleRowChanged = (updated: User) => {
     if (updated.id === -1) {
@@ -550,12 +609,47 @@ export function AdminUsersPage() {
       }
     }
 
-    return matchesSearch && matchesStatus && matchesPlano;
+    let matchesPagamento = true;
+    if (pagamentoFilter === 'gerou_nao_pagou') {
+      matchesPagamento = !!u.has_pending_payment;
+    } else if (pagamentoFilter === 'ok') {
+      matchesPagamento = !u.has_pending_payment;
+    }
+
+    const emailOk = u.role === 'admin' || !!u.email_verified;
+    let matchesEmail = true;
+    if (emailFilter === 'validado') {
+      matchesEmail = emailOk;
+    } else if (emailFilter === 'nao_validado') {
+      matchesEmail = !emailOk;
+    }
+
+    let matchesRole = true;
+    if (roleFilter !== 'all') {
+      matchesRole = u.role === roleFilter;
+    }
+
+    let matchesOnline = true;
+    if (onlineFilter === 'online') {
+      matchesOnline = !!u.is_online;
+    } else if (onlineFilter === 'offline') {
+      matchesOnline = !u.is_online;
+    }
+
+    return (
+      matchesSearch &&
+      matchesStatus &&
+      matchesPlano &&
+      matchesPagamento &&
+      matchesEmail &&
+      matchesRole &&
+      matchesOnline
+    );
   });
 
   return (
-    <div className="bandeira-workspace" style={{ padding: '24px' }}>
-      <div className="bandeira-main-panel" style={{ width: '100%', maxWidth: '100%', margin: '0 auto', background: '#111622', border: '1px solid #1f293d', borderRadius: '12px', padding: '24px' }}>
+    <div className="bandeira-workspace admin-users-page" style={{ padding: '24px' }}>
+      <div className="bandeira-main-panel admin-users-panel" style={{ width: '100%', maxWidth: '100%', margin: '0 auto', background: '#111622', border: '1px solid #1f293d', borderRadius: '14px', padding: '24px' }}>
         
         {/* Header da Página */}
         <div className="bandeira-panel-header" style={{ marginBottom: '24px', borderBottom: '1px solid #1f293d', paddingBottom: '16px' }}>
@@ -564,87 +658,62 @@ export function AdminUsersPage() {
         </div>
 
         {/* Dashboard de Métricas / Faturamento */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-          gap: '16px',
-          marginBottom: '24px'
-        }}>
-          
-          {/* Card Faturamento */}
-          <div style={{
-            background: 'linear-gradient(135deg, #1e3c72 0%, #2a5298 100%)',
-            borderRadius: '10px',
-            padding: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            boxShadow: '0 4px 6px rgba(0, 0, 0, 0.15)'
-          }}>
-            <div>
-              <span style={{ fontSize: '12px', color: '#cbd5e0', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Faturamento (Mês)</span>
-              <h3 style={{ fontSize: '24px', fontWeight: 700, color: '#fff', margin: '6px 0 0 0' }}>{formatCurrency(stats.monthly_billing)}</h3>
+        <div className="admin-stats-grid">
+
+          {/* Card Acessos / Planos */}
+          <div className="admin-stat-card" style={{ background: 'linear-gradient(135deg, #1e3c72 0%, #2a5298 100%)', border: 'none' }}>
+            <div className="admin-stat-info">
+              <span className="admin-stat-label" style={{ color: '#cbd5e0' }}>Acessos / Planos (Mês)</span>
+              <h3 className="admin-stat-value">{formatCurrency(stats.monthly_billing)}</h3>
             </div>
-            <div style={{ background: 'rgba(255,255,255,0.15)', padding: '10px', borderRadius: '8px' }}>
-              <DollarSign size={24} color="#48bb78" />
+            <div className="admin-stat-icon"><DollarSign size={22} color="#9ae6b4" /></div>
+          </div>
+
+          {/* Card Vendas de Moldes */}
+          <div className="admin-stat-card" style={{ background: 'linear-gradient(135deg, #2d1b4e 0%, #4a2a6e 100%)', border: 'none' }}>
+            <div className="admin-stat-info">
+              <span className="admin-stat-label" style={{ color: '#d6bcfa' }}>Vendas de Moldes (Mês)</span>
+              <h3 className="admin-stat-value">{formatCurrency(stats.molds_billing)}</h3>
+              <span className="admin-stat-sub" style={{ color: '#b794f4' }}>{stats.molds_sold_total} molde(s) vendido(s) no total</span>
             </div>
+            <div className="admin-stat-icon"><Hammer size={22} color="#d6bcfa" /></div>
+          </div>
+
+          {/* Card Faturamento Total (planos + moldes) */}
+          <div className="admin-stat-card" style={{ background: 'linear-gradient(135deg, #1a3c2e 0%, #256e4a 100%)', border: 'none' }}>
+            <div className="admin-stat-info">
+              <span className="admin-stat-label" style={{ color: '#c6f6d5' }}>Faturamento Total (Mês)</span>
+              <h3 className="admin-stat-value">{formatCurrency(stats.total_billing)}</h3>
+              <span className="admin-stat-sub" style={{ color: '#9ae6b4' }}>Planos + Moldes</span>
+            </div>
+            <div className="admin-stat-icon"><DollarSign size={22} color="#9ae6b4" /></div>
           </div>
 
           {/* Card Ativos */}
-          <div style={{
-            background: '#1a202c',
-            border: '1px solid #2d3748',
-            borderRadius: '10px',
-            padding: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between'
-          }}>
-            <div>
-              <span style={{ fontSize: '12px', color: '#a0aec0', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Clientes Ativos</span>
-              <h3 style={{ fontSize: '24px', fontWeight: 700, color: '#48bb78', margin: '6px 0 0 0' }}>{stats.active}</h3>
+          <div className="admin-stat-card">
+            <div className="admin-stat-info">
+              <span className="admin-stat-label">Clientes Ativos</span>
+              <h3 className="admin-stat-value" style={{ color: '#48bb78' }}>{stats.active}</h3>
             </div>
-            <div style={{ background: 'rgba(72,187,120,0.1)', padding: '10px', borderRadius: '8px' }}>
-              <CheckCircle2 size={24} color="#48bb78" />
-            </div>
+            <div className="admin-stat-icon" style={{ background: 'rgba(72,187,120,0.12)' }}><CheckCircle2 size={22} color="#48bb78" /></div>
           </div>
 
           {/* Card Pendentes */}
-          <div style={{
-            background: '#1a202c',
-            border: '1px solid #2d3748',
-            borderRadius: '10px',
-            padding: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between'
-          }}>
-            <div>
-              <span style={{ fontSize: '12px', color: '#a0aec0', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Aguardando Pgto</span>
-              <h3 style={{ fontSize: '24px', fontWeight: 700, color: '#ecc94b', margin: '6px 0 0 0' }}>{stats.pending}</h3>
+          <div className="admin-stat-card">
+            <div className="admin-stat-info">
+              <span className="admin-stat-label">Aguardando Pgto</span>
+              <h3 className="admin-stat-value" style={{ color: '#ecc94b' }}>{stats.pending}</h3>
             </div>
-            <div style={{ background: 'rgba(236,201,75,0.1)', padding: '10px', borderRadius: '8px' }}>
-              <Clock size={24} color="#ecc94b" />
-            </div>
+            <div className="admin-stat-icon" style={{ background: 'rgba(236,201,75,0.12)' }}><Clock size={22} color="#ecc94b" /></div>
           </div>
 
           {/* Card Total */}
-          <div style={{
-            background: '#1a202c',
-            border: '1px solid #2d3748',
-            borderRadius: '10px',
-            padding: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between'
-          }}>
-            <div>
-              <span style={{ fontSize: '12px', color: '#a0aec0', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Cadastrados</span>
-              <h3 style={{ fontSize: '24px', fontWeight: 700, color: '#fff', margin: '6px 0 0 0' }}>{stats.total}</h3>
+          <div className="admin-stat-card">
+            <div className="admin-stat-info">
+              <span className="admin-stat-label">Total Cadastrados</span>
+              <h3 className="admin-stat-value">{stats.total}</h3>
             </div>
-            <div style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px' }}>
-              <Users size={24} color="#a0aec0" />
-            </div>
+            <div className="admin-stat-icon" style={{ background: 'rgba(255,255,255,0.06)' }}><Users size={22} color="#a0aec0" /></div>
           </div>
 
         </div>
@@ -735,6 +804,132 @@ export function AdminUsersPage() {
             </select>
           </div>
 
+          {/* Filtro por Pagamento */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '180px' }}>
+            <Filter size={14} color="#718096" />
+            <select
+              value={pagamentoFilter}
+              onChange={(e) => setPagamentoFilter(e.target.value)}
+              style={{ flex: 1, padding: '10px', background: '#111622', border: '1px solid #2d3748', borderRadius: '6px', color: '#fff', fontSize: '14px', cursor: 'pointer', outline: 'none' }}
+            >
+              <option value="all">Pagamento: Todos</option>
+              <option value="gerou_nao_pagou">Gerou, não pagou</option>
+              <option value="ok">Sem pendência</option>
+            </select>
+          </div>
+
+          {/* Filtro por E-mail validado */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '180px' }}>
+            <Filter size={14} color="#718096" />
+            <select
+              value={emailFilter}
+              onChange={(e) => setEmailFilter(e.target.value)}
+              style={{ flex: 1, padding: '10px', background: '#111622', border: '1px solid #2d3748', borderRadius: '6px', color: '#fff', fontSize: '14px', cursor: 'pointer', outline: 'none' }}
+            >
+              <option value="all">E-mail: Todos</option>
+              <option value="validado">Validado</option>
+              <option value="nao_validado">Não validado</option>
+            </select>
+          </div>
+
+          {/* Filtro por Papel */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '160px' }}>
+            <Filter size={14} color="#718096" />
+            <select
+              value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value)}
+              style={{ flex: 1, padding: '10px', background: '#111622', border: '1px solid #2d3748', borderRadius: '6px', color: '#fff', fontSize: '14px', cursor: 'pointer', outline: 'none' }}
+            >
+              <option value="all">Papel: Todos</option>
+              <option value="user">Usuário</option>
+              <option value="admin">Administrador</option>
+            </select>
+          </div>
+
+          {/* Filtro por Online */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '160px' }}>
+            <Filter size={14} color="#718096" />
+            <select
+              value={onlineFilter}
+              onChange={(e) => setOnlineFilter(e.target.value)}
+              style={{ flex: 1, padding: '10px', background: '#111622', border: '1px solid #2d3748', borderRadius: '6px', color: '#fff', fontSize: '14px', cursor: 'pointer', outline: 'none' }}
+            >
+              <option value="all">Conexão: Todos</option>
+              <option value="online">Online agora</option>
+              <option value="offline">Offline</option>
+            </select>
+          </div>
+
+          {/* Limpar filtros + contador */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: 'auto' }}>
+            <span style={{ color: '#718096', fontSize: '13px', whiteSpace: 'nowrap' }}>
+              {filteredUsers.length} de {users.length}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setSearch('');
+                setStatusFilter('all');
+                setPlanoFilter('all');
+                setPagamentoFilter('all');
+                setEmailFilter('all');
+                setRoleFilter('all');
+                setOnlineFilter('all');
+              }}
+              style={{ padding: '9px 14px', background: '#2d3748', color: '#cbd5e0', border: '1px solid #4a5568', borderRadius: '6px', fontSize: '13px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+            >
+              Limpar filtros
+            </button>
+          </div>
+
+        </div>
+
+        {/* Bloqueio de e-mails (blocklist) — bloquear por e-mail/ID caso queira */}
+        <div style={{ marginBottom: '18px', background: '#161e2e', border: '1px solid #24304f', borderRadius: '12px', overflow: 'hidden' }}>
+          <button
+            type="button"
+            onClick={() => setShowBlocklist((v) => !v)}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: 'transparent', border: 'none', color: '#f7fafc', padding: '14px 16px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+              🚫 Bloqueio de e-mails
+              {blockedEmails.length > 0 ? <span style={{ background: 'rgba(229,62,62,0.15)', color: '#f56565', borderRadius: '999px', padding: '2px 9px', fontSize: '12px' }}>{blockedEmails.length}</span> : null}
+            </span>
+            <span style={{ color: '#718096', fontSize: '13px' }}>{showBlocklist ? 'ocultar ▲' : 'mostrar ▼'}</span>
+          </button>
+          {showBlocklist && (
+            <div style={{ padding: '0 16px 16px' }}>
+              <p style={{ color: '#a0aec0', fontSize: '13px', margin: '0 0 12px' }}>
+                E-mails aqui <strong>não conseguem logar</strong> nem <strong>criar conta nova</strong>. Bloquear um cliente na lista abaixo (botão <strong>Bloquear</strong>) já adiciona o e-mail dele aqui automaticamente.
+              </p>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <input
+                  type="email"
+                  value={blockInput}
+                  onChange={(e) => { setBlockInput(e.target.value); setBlockErr(null); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void handleBlockEmailManual(); }}
+                  placeholder="email@dobloqueado.com"
+                  style={{ flex: '1 1 240px', minWidth: 0, padding: '10px 12px', background: '#111622', border: '1px solid #2d3748', borderRadius: '8px', color: '#fff', fontSize: '14px', outline: 'none' }}
+                />
+                <button type="button" onClick={() => void handleBlockEmailManual()} disabled={blockBusy} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#e53e3e', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 18px', fontSize: '14px', fontWeight: 600, cursor: blockBusy ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+                  {blockBusy ? <Loader2 size={14} className="mold-import-spinner" /> : null} Bloquear e-mail
+                </button>
+              </div>
+              {blockErr && <p className="mold-import-error" style={{ margin: '8px 0 0' }}>{blockErr}</p>}
+              {blockedEmails.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '14px' }}>
+                  {blockedEmails.map((b) => (
+                    <div key={b.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', background: '#111622', border: '1px solid #2d3748', borderRadius: '8px', padding: '9px 12px' }}>
+                      <span style={{ color: '#e2e8f0', fontSize: '13px', wordBreak: 'break-all' }}>
+                        {b.email}{b.motivo ? <span style={{ color: '#718096' }}> · {b.motivo}</span> : null}
+                      </span>
+                      <button type="button" onClick={() => void handleUnblockEmail(b.email)} style={{ background: '#2d3748', color: '#90cdf4', border: '1px solid #4a5568', borderRadius: '6px', padding: '5px 12px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>Desbloquear</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Tabela de Usuários */}
@@ -744,31 +939,11 @@ export function AdminUsersPage() {
           </p>
         ) : error ? (
           <p className="mold-import-error" style={{ color: '#e53e3e', textAlign: 'center', padding: '16px' }}>{error}</p>
+        ) : filteredUsers.length === 0 ? (
+          <div className="admin-users-empty">Nenhum cliente encontrado com os filtros aplicados.</div>
         ) : (
-          <div className="table-scroll" style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '550px', borderRadius: '8px', border: '1px solid #1f293d' }}>
-            <table className="rifa-compradores-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '900px' }}>
-              <thead>
-                <tr style={{ background: '#161e2e', borderBottom: '1px solid #1f293d', position: 'sticky', top: 0, zIndex: 2 }}>
-                  <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', background: '#161e2e', position: 'sticky', top: 0 }}>Cliente</th>
-                  <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', background: '#161e2e', position: 'sticky', top: 0 }}>Papel</th>
-                  <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', background: '#161e2e', position: 'sticky', top: 0 }}>Status</th>
-                  <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', background: '#161e2e', position: 'sticky', top: 0 }}>Plano Atual</th>
-                  <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', background: '#161e2e', position: 'sticky', top: 0 }}>Valor Pago</th>
-                  <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', background: '#161e2e', position: 'sticky', top: 0 }}>Assinou Em</th>
-                  <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', background: '#161e2e', position: 'sticky', top: 0 }}>Acesso Até</th>
-                  <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', background: '#161e2e', position: 'sticky', top: 0 }}>Cadastrado Em</th>
-                  <th style={{ padding: '14px 16px', color: '#a0aec0', fontWeight: 600, fontSize: '13px', width: '220px', background: '#161e2e', position: 'sticky', top: 0 }}>Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredUsers.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} style={{ padding: '32px', textAlign: 'center', color: '#718096' }}>
-                      Nenhum cliente encontrado com os filtros aplicados.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredUsers.map((u) => {
+          <div className="admin-users-list">
+            {filteredUsers.map((u) => {
                     const isExp = isExpired(u);
                     let statusLabel = '';
                     let statusBg = '';
@@ -794,119 +969,71 @@ export function AdminUsersPage() {
                       statusColor = '#a0aec0';
                     }
 
-                    return (
-                      <tr key={u.id} style={{ borderBottom: '1px solid #1f293d', background: '#111622' }}>
-                        
-                        {/* Cliente Info */}
-                        <td style={{ padding: '14px 16px' }}>
-                          <div style={{ display: 'flex', flexDirection: 'column' }}>
-                            <span style={{ fontWeight: 600, color: '#f7fafc', fontSize: '14px' }}>{u.name}</span>
-                            <span style={{ fontSize: '12px', color: '#718096', marginTop: '2px' }}>{u.email}</span>
-                            {u.session_device && (
-                              <span style={{ fontSize: '11px', color: '#cbd5e0', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                💻 {u.session_device}
-                              </span>
-                            )}
-                          </div>
-                        </td>
+              const emailOk = u.role === 'admin' || u.email_verified;
+              const valorPago = u.valor_pago ?? u.plano_valor;
 
-                        {/* Papel */}
-                        <td style={{ padding: '14px 16px', color: u.role === 'admin' ? '#ecc94b' : '#cbd5e0', fontSize: '13px' }}>
-                          {u.role === 'admin' ? 'Administrador' : 'Usuário'}
-                        </td>
+              return (
+                <div key={u.id} className="admin-user-card">
+                  {/* Topo: identidade + selos */}
+                  <div className="admin-user-card-top">
+                    <div className="admin-user-identity">
+                      <span className="admin-user-name">{u.name}</span>
+                      <span className="admin-user-email">{u.email}</span>
+                      {u.session_device && <span className="admin-user-device">💻 {u.session_device}</span>}
+                    </div>
+                    <div className="admin-user-badges">
+                      <span className="admin-badge" style={{ background: statusBg, color: statusColor }}>{statusLabel}</span>
+                      {u.is_online ? (
+                        <span className="admin-badge" style={{ background: 'rgba(72,187,120,0.15)', color: '#48bb78' }}>🟢 Online</span>
+                      ) : u.last_activity ? (
+                        <span className="admin-badge" style={{ background: 'rgba(237,137,54,0.12)', color: '#ed8936' }} title={`Última atividade: ${formatDataHora(u.last_activity)}`}>Offline</span>
+                      ) : null}
+                      {emailOk ? (
+                        <span className="admin-badge" style={{ background: 'rgba(72,187,120,0.12)', color: '#48bb78' }}><CheckCircle2 size={12} /> E-mail</span>
+                      ) : (
+                        <span className="admin-badge" style={{ background: 'rgba(229,62,62,0.12)', color: '#f56565' }}><Clock size={12} /> E-mail ✗</span>
+                      )}
+                      {u.phone_verified ? (
+                        <span className="admin-badge" style={{ background: 'rgba(37,211,102,0.14)', color: '#25d366' }}>📱 Tel. validado</span>
+                      ) : u.phone ? (
+                        <span className="admin-badge" style={{ background: 'rgba(229,62,62,0.12)', color: '#f56565' }}>📱 Tel. ✗</span>
+                      ) : null}
+                      {u.has_pending_payment && (
+                        <span className="admin-badge" style={{ background: 'rgba(237,137,54,0.12)', color: '#ed8936' }} title="Gerou o pagamento (Pix) mas nunca efetuou">Gerou, não pagou</span>
+                      )}
+                    </div>
+                  </div>
 
-                        {/* Status */}
-                        <td style={{ padding: '14px 16px' }}>
-                          <span style={{
-                            padding: '4px 8px',
-                            borderRadius: '4px',
-                            fontSize: '11px',
-                            fontWeight: 600,
-                            background: statusBg,
-                            color: statusColor,
-                            display: 'inline-block',
-                            textTransform: 'uppercase'
-                          }}>
-                            {statusLabel}
-                          </span>
-                          {u.is_online ? (
-                            <span style={{
-                              padding: '4px 8px',
-                              borderRadius: '4px',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              background: 'rgba(72, 187, 120, 0.15)',
-                              color: '#48bb78',
-                              display: 'inline-block',
-                              marginLeft: '8px',
-                              textTransform: 'uppercase'
-                            }}>
-                              🟢 Online
-                            </span>
-                          ) : u.last_activity ? (
-                            <span style={{
-                              padding: '4px 8px',
-                              borderRadius: '4px',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              background: 'rgba(237, 137, 54, 0.1)',
-                              color: '#ed8936',
-                              display: 'inline-block',
-                              marginLeft: '8px',
-                              textTransform: 'uppercase'
-                            }} title={`Última atividade: ${formatDataHora(u.last_activity)}`}>
-                              Offline
-                            </span>
-                          ) : null}
-                        </td>
+                  {/* Atividade ao vivo: qual aba/ferramenta o cliente está usando agora */}
+                  {u.is_online && u.current_view && (
+                    <div style={{ marginTop: '12px', display: 'inline-flex', alignItems: 'center', gap: '7px', background: 'rgba(66,153,225,0.12)', color: '#63b3ed', borderRadius: '9px', padding: '7px 13px', fontSize: '13px', fontWeight: 600 }}>
+                      📍 Agora em: <strong style={{ color: '#90cdf4' }}>{u.current_view}</strong>
+                    </div>
+                  )}
 
-                        {/* Plano Nome */}
-                        <td style={{ padding: '14px 16px', color: '#e2e8f0', fontSize: '13px', fontWeight: 500 }}>
-                          {u.plano_nome || <span style={{ color: '#4a5568', fontStyle: 'italic' }}>Nenhum</span>}
-                        </td>
+                  {/* Meio: dados em grade rotulada */}
+                  <div className="admin-user-meta">
+                    <div className="admin-meta-item"><span>Telefone</span><strong style={{ color: u.phone ? '#e2e8f0' : '#718096' }}>{u.phone || '—'}</strong></div>
+                    <div className="admin-meta-item"><span>Rede (IP)</span><strong style={{ color: u.last_ip ? '#e2e8f0' : '#718096', fontFamily: 'monospace' }}>{u.last_ip || '—'}</strong></div>
+                    <div className="admin-meta-item"><span>Papel</span><strong style={{ color: u.role === 'admin' ? '#ecc94b' : '#e2e8f0' }}>{u.role === 'admin' ? 'Administrador' : 'Usuário'}</strong></div>
+                    <div className="admin-meta-item"><span>Plano atual</span><strong>{u.plano_nome || 'Nenhum'}</strong></div>
+                    <div className="admin-meta-item"><span>Valor pago</span><strong style={{ color: valorPago != null ? '#48bb78' : '#718096' }}>{valorPago != null ? formatCurrency(valorPago) : '—'}</strong></div>
+                    <div className="admin-meta-item"><span>Assinou em</span><strong>{u.access_started_at ? formatDataHora(u.access_started_at) : u.data_pagamento ? formatDataHora(u.data_pagamento) : '—'}</strong></div>
+                    <div className="admin-meta-item"><span>Acesso até</span><strong>{u.access_expires_at ? formatDataHora(u.access_expires_at) : 'Sem limite'}</strong></div>
+                    <div className="admin-meta-item"><span>Cadastrado em</span><strong>{formatDataHora(u.created_at)}</strong></div>
+                  </div>
 
-                        {/* Valor Pago (o que o cliente pagou no periodo atual; cai no valor do plano se foi liberacao manual) */}
-                        <td style={{ padding: '14px 16px', color: '#48bb78', fontSize: '13px', fontWeight: 600 }}>
-                          {(() => {
-                            const v = u.valor_pago ?? u.plano_valor;
-                            return v !== null && v !== undefined ? formatCurrency(v) : '-';
-                          })()}
-                        </td>
-
-                        {/* Assinou Em (inicio do periodo de acesso atual) */}
-                        <td style={{ padding: '14px 16px', color: '#cbd5e0', fontSize: '13px' }}>
-                          {u.access_started_at
-                            ? formatDataHora(u.access_started_at)
-                            : u.data_pagamento
-                              ? formatDataHora(u.data_pagamento)
-                              : '—'}
-                        </td>
-
-                        {/* Acesso Até */}
-                        <td style={{ padding: '14px 16px', color: '#cbd5e0', fontSize: '13px' }}>
-                          {u.access_expires_at ? formatDataHora(u.access_expires_at) : 'Sem limite'}
-                        </td>
-
-                        {/* Criado em */}
-                        <td style={{ padding: '14px 16px', color: '#718096', fontSize: '13px' }}>
-                          {formatDataHora(u.created_at)}
-                        </td>
-
-                        {/* Ações */}
-                        <td style={{ padding: '14px 16px' }}>
-                          {u.id === currentUser?.id ? (
-                            <span style={{ color: '#718096', fontSize: '12px', fontStyle: 'italic' }}>Sua conta</span>
-                          ) : (
-                            <UserRowActions target={u} planos={planos} onChanged={handleRowChanged} />
-                          )}
-                        </td>
-
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+                  {/* Rodapé: ações */}
+                  <div className="admin-user-actions-wrap">
+                    {u.id === currentUser?.id ? (
+                      <span className="admin-own-account">Sua conta</span>
+                    ) : (
+                      <UserRowActions target={u} planos={planos} onChanged={handleRowChanged} />
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

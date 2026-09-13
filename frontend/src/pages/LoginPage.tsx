@@ -192,6 +192,15 @@ export function LoginPage() {
               {isSubmitting ? 'Aguarde...' : mode === 'login' ? 'Entrar' : 'Criar conta'}
             </button>
           </form>
+
+          {/* Atalho pra página pública de molde sob encomenda (sem login) */}
+          <a href="/solicitar-molde" className="auth-molde-cta">
+            <span className="auth-molde-cta-icon">🤖</span>
+            <span className="auth-molde-cta-text">
+              <strong>Molde sob medida com nossa Inteligência Artificial</strong>
+              <small>Peça já — sem precisar de conta</small>
+            </span>
+          </a>
         </div>
 
         {/* Card do Ranking de Planos */}

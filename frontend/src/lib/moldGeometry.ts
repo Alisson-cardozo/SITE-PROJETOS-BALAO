@@ -146,11 +146,12 @@ export function interpolateHalfWidth(yCm: number, profile: ProfilePoint[]): numb
 export function buildMoldSections(
   alturaTotalCm: number,
   ratios: SectionRatios = DEFAULT_SECTION_RATIOS,
-  tacoConfigs?: SectionTacoConfigMap
+  tacoConfigs?: SectionTacoConfigMap,
+  fillDeficit = false
 ): MoldSection[] {
   const h = Math.max(0, alturaTotalCm);
   const r = normalizeSectionRatios(ratios);
-  
+
   let bocaAltura = round1(h * r.boca);
   let bicoAltura = round1(h * r.bico);
   let bojoAltura = round1(Math.max(0, h - bocaAltura - bicoAltura));
@@ -158,27 +159,49 @@ export function buildMoldSections(
   if (tacoConfigs) {
     const bocaCfg = tacoConfigs['boca'];
     const bojoCfg = tacoConfigs['bojo'];
+    const bicoCfg = tacoConfigs['bico'];
     const hasBocaTacos = bocaCfg && bocaCfg.partitions.length > 0;
     const hasBojoTacos = bojoCfg && bojoCfg.partitions.length > 0;
-    
-    if (hasBocaTacos || hasBojoTacos) {
+    const hasBicoTacos = bicoCfg && bicoCfg.partitions.length > 0;
+
+    if (hasBocaTacos || hasBojoTacos || hasBicoTacos) {
       if (hasBocaTacos) {
         bocaAltura = round1(bocaCfg.partitions.reduce((sum, p) => sum + (p.tacosSubindo ?? 10) * p.alturaTacoCm, 0));
       }
       if (hasBojoTacos) {
         bojoAltura = round1(bojoCfg.partitions.reduce((sum, p) => sum + (p.tacosSubindo ?? 20) * p.alturaTacoCm, 0));
       }
-      bicoAltura = round1(Math.max(0, h - bocaAltura - bojoAltura));
+      if (fillDeficit) {
+        // Resultado final (PDF/corte/salvo): Bico sempre completa o que
+        // sobrou do molde — precisa bater com o tamanho real da peca.
+        bicoAltura = round1(Math.max(0, h - bocaAltura - bojoAltura));
+      } else if (hasBicoTacos) {
+        // Editor ao vivo: Bico tambem mostra so o que foi configurado ate
+        // agora, igual Boca/Bojo — vai "enchendo" conforme o cliente digita,
+        // em vez de aparecer com o tamanho total (sobra) de cara.
+        bicoAltura = round1(bicoCfg.partitions.reduce((sum, p) => sum + (p.tacosSubindo ?? 10) * p.alturaTacoCm, 0));
+      } else {
+        bicoAltura = 0;
+      }
     }
   }
 
   const bocaFim = bocaAltura;
   const bojoFim = bocaFim + bojoAltura;
+  // Bico nunca pode passar do topo real do molde (h) — so "estoura" pra cima
+  // do que sobrou se o cliente configurar mais taco do que cabe.
+  const bicoFim = fillDeficit ? h : round1(Math.min(h, bojoFim + bicoAltura));
+
+  // Molde "taqueado" (feito pela Carla / venda): uma seção só (boca cobrindo
+  // 100%, bojo/bico zerados). Nesse caso as partições são chamadas de "Parte",
+  // não de "Boca". Moldes manuais (Boca/Bojo/Bico) mantêm os nomes normais.
+  const isTaqueado = r.boca >= 0.999 && r.bojo <= 0.001 && r.bico <= 0.001;
+  const bocaNome = isTaqueado ? 'Parte' : 'Boca';
 
   return [
     {
       id: 'boca',
-      nome: 'Boca',
+      nome: bocaNome,
       inicioCm: 0,
       fimCm: bocaFim,
       alturaCm: bocaAltura,
@@ -198,8 +221,8 @@ export function buildMoldSections(
       id: 'bico',
       nome: 'Bico',
       inicioCm: bojoFim,
-      fimCm: h,
-      alturaCm: bicoAltura,
+      fimCm: bicoFim,
+      alturaCm: round1(Math.max(0, bicoFim - bojoFim)),
       percentual: h > 0 ? round1((bicoAltura / h) * 100) : round1(r.bico * 100),
       cor: SECTION_COLORS.bico,
     },
@@ -209,7 +232,8 @@ export function buildMoldSections(
 export function buildMoldProfile(
   pontos: MoldPoint[],
   ratios: SectionRatios = DEFAULT_SECTION_RATIOS,
-  tacoConfigs?: SectionTacoConfigMap
+  tacoConfigs?: SectionTacoConfigMap,
+  fillDeficit = false
 ): MoldProfile | null {
   const points = buildProfilePoints(pontos);
   if (points.length < 2) {
@@ -229,7 +253,7 @@ export function buildMoldProfile(
     alturaTotalCm: round1(alturaTotalCm),
     larguraMaximaCm: round1(maxHalf * 2),
     larguraBocaCm: round1(bocaHalf * 2),
-    secoes: buildMoldSections(alturaTotalCm, ratios, tacoConfigs),
+    secoes: buildMoldSections(alturaTotalCm, ratios, tacoConfigs, fillDeficit),
   };
 }
 
@@ -324,6 +348,12 @@ export const PARTITION_DIVISION_COLORS = [
   '#9333ea',
   '#ea580c',
   '#0891b2',
+  '#ca8a04',
+  '#db2777',
+  '#4f46e5',
+  '#059669',
+  '#b91c1c',
+  '#7c3aed',
 ];
 
 export function createPartition(
@@ -337,7 +367,9 @@ export function createPartition(
   return {
     id: `p-${Math.random().toString(36).slice(2, 9)}`,
     tacosPorGomo: Math.max(1, Math.floor(tacosPorGomo) || 1),
-    alturaTacoCm: Math.max(1, Math.floor(alturaTacoCm) || 1),
+    // Taco em passos de 0,5 cm (ex.: 2,5) — nunca truncar pra inteiro, senão
+    // ao adicionar uma repartição copiando um taco de 2,5 ele virava 2.
+    alturaTacoCm: Math.max(0.5, Math.round((Number(alturaTacoCm) || 1) * 2) / 2),
     tacosSubindo: Math.max(1, Math.floor(tacosSubindo) || 1),
     peso: Math.max(0.01, Number(peso) || 1),
     cor,
@@ -481,8 +513,11 @@ export function balancePartitionTotals(
   return result;
 }
 
-/** Limite de fileiras por faixa — evita milhares de linhas SVG e freeze no browser. */
-export const MAX_TACO_ROWS = 200;
+/** Limite de fileiras por faixa — evita milhares de linhas SVG e freeze no
+ * browser. Alto o suficiente pra cobrir moldes taqueados reais (ex.: 600 cm com
+ * taco de 2,5 cm = 240 fileiras) sem distorcer a contagem; só corta casos
+ * extremos (ex.: taco de 1 cm num molde de 12 m). */
+export const MAX_TACO_ROWS = 1200;
 
 /**
  * Ao reduzir tacos por gomo, aumenta fileiras (subindo) para manter o total.
@@ -509,7 +544,8 @@ export function alturaTacoToKeepTotal(
  */
 export function expandSectionPartitions(
   secao: MoldSection,
-  config: SectionTacoConfig
+  config: SectionTacoConfig,
+  fillDeficit = false
 ): Array<MoldSection & { partition: SectionPartition; flatConfig: FlatTacoConfig }> {
   let parts = [...config.partitions];
   if (parts.length === 0) {
@@ -519,19 +555,21 @@ export function expandSectionPartitions(
   // 1. Calcula a altura total útil já preenchida pelas configurações manuais
   const totalPartsHeight = parts.reduce((sum, p) => sum + (p.tacosSubindo ?? 10) * p.alturaTacoCm, 0);
 
-  // 2. Se a altura preenchida for menor que a altura total da seção, cria uma repartição virtual em branco no topo
-  if (totalPartsHeight < secao.alturaCm - 0.05) {
-    const blankPartition: SectionPartition = {
-      id: `blank-${secao.id}-${Date.now()}`,
-      tacosPorGomo: 0,
-      alturaTacoCm: 0,
-      tacosSubindo: 0,
-      peso: 0,
-      cor: '#ffffff',
-      corDivisao: '#0f2740',
-      isBlank: true,
-    } as any;
-    parts = [blankPartition, ...parts];
+  // 2. Se sobrar altura sem taco configurado, em vez de deixar um card "em
+  // branco" pro cliente, estende a primeira parte (fisicamente no topo da
+  // seção) com mais fileiras do mesmo padrão — a sequência so continua.
+  // So faz isso quando fillDeficit=true (previa visual / PDF / corte final):
+  // no formulario de edicao (fillDeficit=false) o card tem que mostrar
+  // SEMPRE o valor real que o cliente digitou, senao o preenchimento
+  // automatico "vaza" pro campo editavel e trava o cliente tentando mudar o
+  // tamanho do taco (o maximo permitido passa a ser calculado em cima do
+  // numero ja inflado).
+  const deficitCm = secao.alturaCm - totalPartsHeight;
+  if (fillDeficit && deficitCm > 0.05) {
+    const first = parts[0];
+    const alturaTaco = Math.max(0.5, first.alturaTacoCm || 1);
+    const extraRows = Math.ceil(deficitCm / alturaTaco);
+    parts = [{ ...first, tacosSubindo: (first.tacosSubindo ?? 10) + extraRows }, ...parts.slice(1)];
   }
 
   const n = parts.length;
@@ -539,18 +577,20 @@ export function expandSectionPartitions(
 
   return parts.map((partition, index) => {
     const isLast = index === n - 1; // Fisicamente na base (última parte do loop)
-    const isBlank = (partition as any).isBlank === true;
-    
+
     // Altura da repartição
     const tacosSubindo = partition.tacosSubindo ?? 10;
-    const alturaCm = isBlank
-      ? secao.alturaCm - totalPartsHeight
-      : round1(tacosSubindo * partition.alturaTacoCm);
+    const alturaCm = round1(tacosSubindo * partition.alturaTacoCm);
 
     const fimCm = round1(yTop);
     let inicioCm: number;
-    
-    if (isLast) {
+
+    // So "gruda" a ultima parte no fundo exato da secao quando fillDeficit=true
+    // (evita frestinha de arredondamento no resultado final). No editor ao
+    // vivo (fillDeficit=false) a ultima parte fica com a altura REAL que o
+    // tacosSubindo digitado da — se sobrar espaco, fica em branco na tela
+    // mesmo, pra mostrar exatamente o que foi configurado ate agora.
+    if (isLast && fillDeficit) {
       inicioCm = secao.inicioCm;
     } else {
       inicioCm = round1(Math.max(secao.inicioCm, yTop - alturaCm));
@@ -559,7 +599,9 @@ export function expandSectionPartitions(
 
     return {
       ...secao,
-      nome: n > 1 && !isBlank ? `${secao.nome} ${n - index}` : secao.nome,
+      // Taqueado ("Parte") sempre numerado, mesmo com uma parte só. Seções
+      // manuais (Boca/Bojo/Bico) só numeram quando têm mais de uma partição.
+      nome: n > 1 || secao.nome === 'Parte' ? `${secao.nome} ${n - index}` : secao.nome,
       cor: partition.cor || secao.cor,
       inicioCm,
       fimCm,
@@ -569,8 +611,7 @@ export function expandSectionPartitions(
         tacosPorGomo: partition.tacosPorGomo,
         alturaTacoCm: partition.alturaTacoCm,
         bainhaCm: BAINHA_FINA_CM,
-        isBlank,
-      } as any,
+      },
     };
   });
 }
@@ -680,8 +721,11 @@ export function buildTacoDivisions(
   }
 
   const tacosPorGomo = Math.max(1, Math.min(64, Math.floor(Number(config.tacosPorGomo)) || 1));
-  // Altura do taco so em cm inteiros; evita taco=1cm em secoes enormes (freeze)
-  let alturaTaco = Math.max(1, Math.floor(Number(config.alturaTacoCm)) || 1);
+  // Altura do taco em passos de 0,5 cm (ex.: 2,5) — MESMO valor usado em
+  // buildMoldSections, senao a contagem de "tacos subindo" nao bate (arredondar
+  // 2,5 -> 2 dava 11 tacos em vez de 9). O freeze em secoes enormes e evitado
+  // pelo clamp MAX_TACO_ROWS logo abaixo, nao por truncar a altura.
+  let alturaTaco = Math.max(0.5, Math.round((Number(config.alturaTacoCm) || 1) * 2) / 2);
   const altura = Math.max(0, Number(secao.alturaCm) || 0);
   const bainhaFina = BAINHA_FINA_CM;
   const bainhaGrossa = BAINHA_GROSSA_CM;
@@ -738,7 +782,7 @@ export function buildTacoDivisions(
   usableForRows = Math.max(0, yVertTop - yVertBottom);
   const rowsFinal =
     alturaTaco > 0 && usableForRows > 0.5
-      ? Math.min(MAX_TACO_ROWS, Math.floor(usableForRows / alturaTaco))
+      ? Math.min(MAX_TACO_ROWS, Math.floor(usableForRows / alturaTaco + 1e-6))
       : 0;
 
   const yGridBottom = yVertBottom;
@@ -970,7 +1014,7 @@ export function buildSeparatedPieces(
   sectionColors?: Partial<Record<MoldSection['id'], string>>,
   bainhaCm: number = 1.0
 ): SeparatedPiece[] {
-  const profile = buildMoldProfile(pontos, sectionRatios, tacoConfigs);
+  const profile = buildMoldProfile(pontos, sectionRatios, tacoConfigs, true);
   if (!profile) {
     return [];
   }
@@ -985,7 +1029,8 @@ export function buildSeparatedPieces(
 
     const coloredSecao: MoldSection = { ...secao, cor: sectionColors?.[sectionId] ?? secao.cor };
     const cfg = tacoConfigs[sectionId] ?? { partitions: [] };
-    const bands = expandSectionPartitions(coloredSecao, cfg);
+    // fillDeficit=true: pecas separadas pra corte tem que sair completas.
+    const bands = expandSectionPartitions(coloredSecao, cfg, true);
 
     for (const band of bands) {
       const alturaTotalCm = round1(Math.max(0, band.fimCm - band.inicioCm));
@@ -1081,7 +1126,7 @@ export function computeSectionTacoTotals(
   sectionRatios: SectionRatios,
   bainhaCm: number = 1.0
 ): Record<MoldSection['id'], number> | null {
-  const profile = buildMoldProfile(pontos, sectionRatios, tacoConfigs);
+  const profile = buildMoldProfile(pontos, sectionRatios, tacoConfigs, true);
   if (!profile) {
     return null;
   }
@@ -1089,7 +1134,8 @@ export function computeSectionTacoTotals(
   const totals: Record<MoldSection['id'], number> = { boca: 0, bojo: 0, bico: 0 };
   for (const secao of profile.secoes) {
     const cfg = tacoConfigs[secao.id] ?? { partitions: [] };
-    const bands = expandSectionPartitions(secao, cfg);
+    // fillDeficit=true: o total mostrado em resumos/listas e o final (completo).
+    const bands = expandSectionPartitions(secao, cfg, true);
     totals[secao.id] = bands.reduce(
       (sum, band) => sum + buildTacoDivisions(band, band.flatConfig, profile.points, bainhaCm).totalTacos,
       0

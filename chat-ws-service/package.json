@@ -1,0 +1,13 @@
+{
+  "name": "chat-ws-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Broadcaster de WebSocket pro chat do WhatsApp (aba Mensagens do admin) — so repassa eventos, nao guarda nada.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

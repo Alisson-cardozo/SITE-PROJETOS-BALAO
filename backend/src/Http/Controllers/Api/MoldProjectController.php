@@ -164,21 +164,38 @@ final class MoldProjectController
         $clientName = trim((string) $request->input('client_name', ''));
         $message = trim((string) $request->input('message', ''));
 
-        $file = $_FILES['pdf'] ?? null;
-        if (!is_array($file) || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-            return Response::json(['error' => 'Envie o PDF do molde.'], 422);
-        }
+        $baseName = preg_replace('/[^A-Za-z0-9_\-.]/', '_', (string) $project['display_nome']);
 
-        if ((int) ($file['size'] ?? 0) > self::MAX_PDF_SIZE_BYTES) {
-            return Response::json(['error' => 'PDF muito grande (limite de 15MB).'], 422);
+        // pdf = molde completo (obrigatorio); pdf_a4/pdf_a3 = versoes fatiadas
+        // em folha comum (opcionais — o front sempre manda as 3, mas nao
+        // trava o envio se algum dia faltar uma).
+        $attachments = [];
+        $totalBytes = 0;
+        foreach ([
+            'pdf' => $baseName . '.pdf',
+            'pdf_a4' => $baseName . '-a4.pdf',
+            'pdf_a3' => $baseName . '-a3.pdf',
+        ] as $field => $filename) {
+            $uploaded = $_FILES[$field] ?? null;
+            if (!is_array($uploaded) || ($uploaded['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+                if ($field === 'pdf') {
+                    return Response::json(['error' => 'Envie o PDF do molde.'], 422);
+                }
+                continue;
+            }
+            if ((int) ($uploaded['size'] ?? 0) > self::MAX_PDF_SIZE_BYTES) {
+                return Response::json(['error' => "PDF muito grande (limite de 15MB): {$filename}"], 422);
+            }
+            $binary = file_get_contents((string) $uploaded['tmp_name']);
+            if ($binary === false || $binary === '') {
+                return Response::json(['error' => "Nao foi possivel ler o PDF enviado: {$filename}"], 500);
+            }
+            $totalBytes += strlen($binary);
+            $attachments[] = ['filename' => $filename, 'contentType' => 'application/pdf', 'contentBase64' => base64_encode($binary)];
         }
-
-        $binary = file_get_contents((string) $file['tmp_name']);
-        if ($binary === false || $binary === '') {
-            return Response::json(['error' => 'Nao foi possivel ler o PDF enviado.'], 500);
+        if ($totalBytes > self::MAX_PDF_SIZE_BYTES) {
+            return Response::json(['error' => 'PDFs muito grandes juntos (limite total de 15MB).'], 422);
         }
-
-        $filename = preg_replace('/[^A-Za-z0-9_\-.]/', '_', (string) $project['display_nome']) . '.pdf';
 
         $bodyLines = [];
         $bodyLines[] = $clientName !== '' ? "Ola, {$clientName}!" : 'Ola!';
@@ -187,7 +204,7 @@ final class MoldProjectController
             $bodyLines[] = $message;
             $bodyLines[] = '';
         }
-        $bodyLines[] = "Segue em anexo o molde \"{$project['nome']}\" (modelo {$project['modelo']}), em pecas separadas.";
+        $bodyLines[] = "Segue em anexo o molde \"{$project['nome']}\" (modelo {$project['modelo']}), em pecas separadas — o PDF completo e mais 2 versoes fatiadas em folha A4/A3, numeradas, pra montar sem plotter.";
         $bodyLines[] = '';
         $bodyLines[] = 'Dados do molde:';
         $bodyLines[] = "- Nome: {$project['nome']}";
@@ -202,11 +219,7 @@ final class MoldProjectController
             Mailer::send($clientEmail, "Seu molde: {$project['nome']}", [
                 'body' => implode("\n", $bodyLines),
                 'html' => $this->buildEmailHtml($project, $clientName, $message),
-                'files' => [[
-                    'filename' => $filename,
-                    'contentType' => 'application/pdf',
-                    'contentBase64' => base64_encode($binary),
-                ]],
+                'files' => $attachments,
             ]);
         } catch (Throwable $exception) {
             return Response::json(['error' => 'Nao foi possivel enviar o email: ' . $exception->getMessage()], 502);

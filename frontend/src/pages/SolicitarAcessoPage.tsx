@@ -32,6 +32,78 @@ export function SolicitarAcessoPage({ lockedTabLabel, systemSettings }: Solicita
   // Plano escolhido para pagar com cartao (abre o formulario inline).
   const [cardPlano, setCardPlano] = useState<PlanoPublic | null>(null);
 
+  // Cupom de desconto (opcional). Cada plano pode ter um desconto diferente — ou
+  // o cupom pode nem valer pra ele. `porPlano` guarda o valor final por plano_id
+  // (so os planos em que o cupom vale entram no mapa).
+  const [cupomInput, setCupomInput] = useState('');
+  const [cupomAplicado, setCupomAplicado] = useState<{ codigo: string; porPlano: Record<number, number> } | null>(null);
+  const [cupomError, setCupomError] = useState<string | null>(null);
+  const [cupomBusy, setCupomBusy] = useState(false);
+
+  /** Ordem dos cards: o plano com a Assistente-IA Carla SEMPRE primeiro, depois
+   * do maior valor para o menor. */
+  const planosOrdenados = [...planos].sort((a, b) => {
+    const ca = a.carla_ia ? 1 : 0;
+    const cb = b.carla_ia ? 1 : 0;
+    if (ca !== cb) return cb - ca;
+    return b.valor - a.valor;
+  });
+
+  /** Valor final do plano com o cupom (ou o valor cheio se o cupom não vale). */
+  const valorPlano = (plano: PlanoPublic): number => cupomAplicado?.porPlano[plano.id] ?? plano.valor;
+  const cupomValePlano = (plano: PlanoPublic): boolean =>
+    !!cupomAplicado && cupomAplicado.porPlano[plano.id] !== undefined;
+
+  const handleAplicarCupom = async () => {
+    if (!token) return;
+    const codigo = cupomInput.trim().toUpperCase();
+    if (codigo === '') {
+      setCupomError('Digite o código do cupom.');
+      return;
+    }
+    if (planos.length === 0) return;
+    setCupomError(null);
+    setCupomBusy(true);
+    try {
+      // Valida o cupom pra CADA plano (o desconto pode variar / não valer).
+      const resultados = await Promise.all(
+        planos.map((p) =>
+          api
+            .validarCupom(codigo, p.id, token)
+            .then((r) => ({ id: p.id, valor: r.data.valor_final, err: null as string | null }))
+            .catch((e) => ({ id: p.id, valor: null as number | null, err: e instanceof ApiError ? e.message : 'Cupom inválido.' }))
+        )
+      );
+
+      const porPlano: Record<number, number> = {};
+      let primeiroErro: string | null = null;
+      for (const r of resultados) {
+        if (r.valor !== null) porPlano[r.id] = r.valor;
+        else if (!primeiroErro && r.err) primeiroErro = r.err;
+      }
+
+      if (Object.keys(porPlano).length === 0) {
+        setCupomAplicado(null);
+        setCupomError(primeiroErro ?? 'Cupom inválido.');
+        return;
+      }
+
+      setCupomAplicado({ codigo, porPlano });
+      setCupomInput(codigo);
+    } catch {
+      setCupomAplicado(null);
+      setCupomError('Não foi possível validar o cupom.');
+    } finally {
+      setCupomBusy(false);
+    }
+  };
+
+  const removerCupom = () => {
+    setCupomAplicado(null);
+    setCupomInput('');
+    setCupomError(null);
+  };
+
   const mpPublicKey = systemSettings?.mercado_pago_public_key ?? null;
 
   const loadPlanos = useCallback(async () => {
@@ -57,7 +129,7 @@ export function SolicitarAcessoPage({ lockedTabLabel, systemSettings }: Solicita
     setCreatingPlanoId(plano.id);
     setCreateError(null);
     try {
-      const response = await api.createPagamento(plano.id, token);
+      const response = await api.createPagamento(plano.id, token, cupomValePlano(plano) ? cupomAplicado?.codigo : null);
       setPagamento(response.data);
     } catch (err) {
       setCreateError(err instanceof ApiError ? err.message : 'Não foi possível gerar o Pix. Tente novamente.');
@@ -186,8 +258,9 @@ export function SolicitarAcessoPage({ lockedTabLabel, systemSettings }: Solicita
             <MercadoPagoCardForm
               publicKey={mpPublicKey}
               planoId={cardPlano.id}
-              valor={cardPlano.valor}
+              valor={valorPlano(cardPlano)}
               authToken={token ?? ''}
+              codigoCupom={cupomValePlano(cardPlano) ? cupomAplicado?.codigo : null}
               onSuccess={handleCartaoSuccess}
               onCancel={() => setCardPlano(null)}
             />
@@ -217,11 +290,118 @@ export function SolicitarAcessoPage({ lockedTabLabel, systemSettings }: Solicita
         ) : (
           <>
             {createError ? <p className="mold-import-error">{createError}</p> : null}
+
+            {/* Cupom de desconto (opcional) */}
+            <div
+              className={!cupomAplicado ? 'cupom-highlight' : undefined}
+              style={{
+                background: '#111622',
+                border: '1px solid #23304d',
+                borderRadius: '12px',
+                padding: '16px',
+                marginBottom: '18px',
+              }}
+            >
+              {cupomAplicado ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                  <span style={{ color: '#48bb78', fontWeight: 600, fontSize: '14px' }}>
+                    ✅ Cupom <strong>{cupomAplicado.codigo}</strong> aplicado
+                    {Object.keys(cupomAplicado.porPlano).length < planos.length
+                      ? ' — válido só para alguns planos'
+                      : ''}
+                  </span>
+                  <button type="button" className="mold-secondary-button" onClick={removerCupom}>
+                    Remover cupom
+                  </button>
+                </div>
+              ) : (
+                <div style={{ position: 'relative', zIndex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                    <span className="cupom-highlight-icon" style={{ fontSize: '20px' }}>🎟️</span>
+                    <span style={{ color: '#f7fafc', fontSize: '15px', fontWeight: 700 }}>Tem um cupom de desconto?</span>
+                    <span className="cupom-highlight-badge">Economize!</span>
+                  </div>
+                  <p style={{ color: '#a0aec0', fontSize: '12px', margin: '0 0 8px' }}>
+                    Digite o código e clique em <strong>Aplicar</strong> para ver o preço com desconto.
+                  </p>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <input
+                      type="text"
+                      value={cupomInput}
+                      onChange={(e) => {
+                        setCupomInput(e.target.value.toUpperCase());
+                        setCupomError(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void handleAplicarCupom();
+                      }}
+                      placeholder="Digite o código"
+                      style={{
+                        flex: 1,
+                        minWidth: '160px',
+                        padding: '10px 12px',
+                        background: '#0b0f18',
+                        border: '1px solid #2d3748',
+                        borderRadius: '8px',
+                        color: '#fff',
+                        fontSize: '14px',
+                        textTransform: 'uppercase',
+                        outline: 'none',
+                      }}
+                    />
+                    <button type="button" className="mold-save-button" onClick={() => void handleAplicarCupom()} disabled={cupomBusy}>
+                      {cupomBusy ? <Loader2 size={16} className="mold-import-spinner" /> : null}
+                      Aplicar
+                    </button>
+                  </div>
+                  {cupomError ? <p className="mold-import-error" style={{ marginBottom: 0 }}>{cupomError}</p> : null}
+                </div>
+              )}
+
+              {/* Aviso: desconto vale só no mês; na renovação, checar novo cupom. */}
+              <p
+                style={{
+                  position: 'relative',
+                  zIndex: 1,
+                  margin: '12px 0 0',
+                  paddingTop: '10px',
+                  borderTop: '1px solid #1f293d',
+                  color: '#ecc94b',
+                  fontSize: '12px',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '6px',
+                  lineHeight: 1.5,
+                }}
+              >
+                <span>⚠️</span>
+                <span>
+                  Desconto válido <strong>apenas para este mês</strong>. Ao renovar no próximo mês, verifique se há um
+                  cupom disponível.
+                </span>
+              </p>
+            </div>
+
             <div className="rifa-card-grid">
-              {planos.map((plano) => (
-                <article key={plano.id} className="rifa-card solicitar-acesso-card">
+              {planosOrdenados.map((plano) => (
+                <article key={plano.id} className={`rifa-card solicitar-acesso-card${plano.carla_ia ? ' plano-carla-card' : ''}`}>
+                  {plano.carla_ia ? (
+                    <span className="plano-carla-badge">🤖 Assistente-IA Carla</span>
+                  ) : null}
                   <h3>{plano.nome}</h3>
-                  <p className="solicitar-acesso-valor">{formatMoeda(plano.valor)}</p>
+                  {cupomValePlano(plano) ? (
+                    <p className="solicitar-acesso-valor">
+                      <span style={{ textDecoration: 'line-through', opacity: 0.55, fontSize: '0.7em', marginRight: '8px' }}>
+                        {formatMoeda(plano.valor)}
+                      </span>
+                      {formatMoeda(valorPlano(plano))}
+                    </p>
+                  ) : (
+                    <p className="solicitar-acesso-valor">{formatMoeda(plano.valor)}</p>
+                  )}
+                  {cupomAplicado && !cupomValePlano(plano) ? (
+                    <p className="bandeira-size-hint" style={{ color: '#ecc94b' }}>Cupom não vale para este plano</p>
+                  ) : null}
                   <p className="bandeira-size-hint">{plano.dias_acesso} dias de acesso</p>
                   <ul className="solicitar-acesso-abas-list">
                     {PLANO_ABA_GROUPS.filter((g) => plano.abas.includes(g.id)).map((g) => {

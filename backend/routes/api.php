@@ -6,6 +6,11 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Http\Controllers\Api\AdminUserController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\ChatbotController;
+use App\Http\Controllers\Api\WhatsAppAdminController;
+use App\Http\Controllers\Api\WhatsAppChatController;
+use App\Http\Controllers\Api\WhatsAppWebhookController;
+use App\Http\Controllers\Api\EmailVerificationController;
 use App\Http\Controllers\Api\BandeiraController;
 use App\Http\Controllers\Api\MercadoPagoWebhookController;
 use App\Http\Controllers\Api\MoldAlignmentController;
@@ -25,21 +30,28 @@ use App\Http\Controllers\Api\RifaController;
 use App\Http\Controllers\Api\RifaPublicController;
 use App\Http\Controllers\Api\SystemSettingsController;
 use App\Http\Controllers\Api\ComunicadoController;
+use App\Http\Controllers\Api\CupomController;
+use App\Http\Controllers\Api\SolicitacaoPublicController;
+use App\Http\Controllers\Api\SolicitacaoAdminController;
 use App\Http\Controllers\Api\NotificacaoController;
 use App\Http\Controllers\Api\LineArtController;
 use App\Http\Middleware\AbaAccessMiddleware;
 use App\Http\Middleware\AdminMiddleware;
 use App\Http\Middleware\AuthMiddleware;
+use App\Http\Middleware\EmailVerifiedMiddleware;
 use App\Http\Middleware\PaidAccessMiddleware;
 
 $router = app()->router;
 $auth = [[AuthMiddleware::class, 'handle']];
+// Autenticado + e-mail confirmado (mas sem exigir plano) — usado nas rotas de
+// pagamento: o cliente so gera um Pix depois de validar o e-mail.
+$authVerified = [[AuthMiddleware::class, 'handle'], [EmailVerifiedMiddleware::class, 'handle']];
 $adminOnly = [[AuthMiddleware::class, 'handle'], [AdminMiddleware::class, 'handle']];
 // Alem de autenticado, exige plano pago ativo (ou ser admin) -- ver
 // PaidAccessMiddleware. Usado em toda rota de funcionalidade; NAO usado nas
 // rotas de auth, configuracoes do sistema, ou nas de plano/pagamento (que
 // sao exatamente a saida do bloqueio).
-$paid = [[AuthMiddleware::class, 'handle'], [PaidAccessMiddleware::class, 'handle']];
+$paid = [[AuthMiddleware::class, 'handle'], [EmailVerifiedMiddleware::class, 'handle'], [PaidAccessMiddleware::class, 'handle']];
 
 /**
  * Alem de $paid, exige que o PLANO do usuario inclua essa aba especifica
@@ -73,11 +85,42 @@ $router->add('GET', '/api/health', static function () {
 $router->add('POST', '/api/auth/register', [AuthController::class, 'register']);
 $router->add('POST', '/api/auth/login', [AuthController::class, 'login']);
 $router->add('GET', '/api/public/planos', [PlanoPublicController::class, 'index']);
+
+// Solicitacao de molde sob encomenda — pagina PUBLICA (sem login).
+$router->add('GET', '/api/public/solicitacao-molde/config', [SolicitacaoPublicController::class, 'config']);
+$router->add('POST', '/api/public/solicitacao-molde', [SolicitacaoPublicController::class, 'criar']);
+$router->add('POST', '/api/public/solicitacao-molde/cartao', [SolicitacaoPublicController::class, 'criarCartao']);
+$router->add('POST', '/api/public/solicitacao-molde/{id}/status', [SolicitacaoPublicController::class, 'status']);
+$router->add('POST', '/api/public/solicitacao-molde/{id}/cancelar', [SolicitacaoPublicController::class, 'cancelar']);
+$router->add('POST', '/api/public/solicitacao-molde/recuperar', [SolicitacaoPublicController::class, 'recuperar']);
+$router->add('POST', '/api/public/solicitacao-molde/{id}/simular-pago', [SolicitacaoPublicController::class, 'simularPago']);
+$router->add('POST', '/api/public/solicitacao-molde/{id}/definir-dados', [SolicitacaoPublicController::class, 'definirDados']);
+$router->add('POST', '/api/public/solicitacao-molde/{id}/dados', [SolicitacaoPublicController::class, 'atualizarDados']);
+$router->add('POST', '/api/public/solicitacao-molde/{id}/tacos', [SolicitacaoPublicController::class, 'salvarTacos']);
+$router->add('POST', '/api/public/solicitacao-molde/{id}/entregar', [SolicitacaoPublicController::class, 'entregar']);
+// Config do admin da solicitacao de molde.
+$router->add('GET', '/api/admin/solicitacao-molde/config', [SolicitacaoAdminController::class, 'config'], $adminOnly);
+$router->add('PUT', '/api/admin/solicitacao-molde/config', [SolicitacaoAdminController::class, 'updateConfig'], $adminOnly);
+$router->add('PUT', '/api/admin/solicitacao-molde/molds/{id}', [SolicitacaoAdminController::class, 'setMoldDisponivel'], $adminOnly);
+$router->add('GET', '/api/admin/solicitacao-molde/pedidos', [SolicitacaoAdminController::class, 'listPedidos'], $adminOnly);
+$router->add('POST', '/api/admin/solicitacao-molde/enviar-chave', [SolicitacaoAdminController::class, 'enviarChave'], $adminOnly);
+$router->add('POST', '/api/admin/solicitacao-molde/consultar-chave', [SolicitacaoAdminController::class, 'consultarChave'], $adminOnly);
 $router->add('GET', '/api/auth/me', [AuthController::class, 'me'], $auth);
 $router->add('PUT', '/api/auth/password', [AuthController::class, 'changePassword'], $auth);
 $router->add('PUT', '/api/auth/email', [AuthController::class, 'changeEmail'], $auth);
+$router->add('POST', '/api/auth/email/confirm', [AuthController::class, 'confirmEmailChange'], $auth);
+$router->add('POST', '/api/auth/activity', [AuthController::class, 'reportActivity'], $auth);
+$router->add('POST', '/api/auth/phone/send', [AuthController::class, 'sendPhoneCode'], $auth);
+$router->add('POST', '/api/auth/phone/confirm', [AuthController::class, 'confirmPhoneCode'], $auth);
+$router->add('DELETE', '/api/auth/account', [AuthController::class, 'deleteAccount'], $auth);
 $router->add('POST', '/api/auth/logout', [AuthController::class, 'logout'], $auth);
 $router->add('POST', '/api/auth/heartbeat', [AuthController::class, 'heartbeat'], $auth);
+
+// Confirmacao de e-mail por codigo de 6 digitos. So autenticado (NAO exige
+// e-mail verificado — e a propria saida do bloqueio).
+$router->add('GET', '/api/auth/email-verification', [EmailVerificationController::class, 'status'], $auth);
+$router->add('POST', '/api/auth/email-verification/send', [EmailVerificationController::class, 'send'], $auth);
+$router->add('POST', '/api/auth/email-verification/confirm', [EmailVerificationController::class, 'confirm'], $auth);
 
 // Administracao — restrito a usuarios com role 'admin'.
 $router->add('GET', '/api/admin/users', [AdminUserController::class, 'index'], $adminOnly);
@@ -87,6 +130,31 @@ $router->add('PUT', '/api/admin/users/{id}/revoke-access', [AdminUserController:
 $router->add('PUT', '/api/admin/users/{id}/password', [AdminUserController::class, 'updatePassword'], $adminOnly);
 $router->add('POST', '/api/admin/users/{id}/revoke-session', [AdminUserController::class, 'revokeSession'], $adminOnly);
 $router->add('DELETE', '/api/admin/users/{id}', [AdminUserController::class, 'destroy'], $adminOnly);
+$router->add('GET', '/api/admin/whatsapp/status', [WhatsAppAdminController::class, 'status'], $adminOnly);
+$router->add('POST', '/api/admin/whatsapp/connect', [WhatsAppAdminController::class, 'connect'], $adminOnly);
+$router->add('POST', '/api/admin/whatsapp/connect-with-code', [WhatsAppAdminController::class, 'connectWithCode'], $adminOnly);
+$router->add('POST', '/api/admin/whatsapp/disconnect', [WhatsAppAdminController::class, 'disconnect'], $adminOnly);
+// Webhook publico da Evolution API (container Docker) — QR/estado novo, sem
+// middleware de auth de proposito, protegido por segredo compartilhado.
+$router->add('POST', '/api/whatsapp/webhook', [WhatsAppWebhookController::class, 'handle']);
+
+// Chat do WhatsApp (aba "Mensagens" do admin).
+$router->add('GET', '/api/admin/whatsapp/conversations', [WhatsAppChatController::class, 'conversations'], $adminOnly);
+$router->add('GET', '/api/admin/whatsapp/conversations/{id}/messages', [WhatsAppChatController::class, 'messages'], $adminOnly);
+$router->add('POST', '/api/admin/whatsapp/conversations/{id}/messages', [WhatsAppChatController::class, 'send'], $adminOnly);
+$router->add('POST', '/api/admin/whatsapp/conversations/{id}/read', [WhatsAppChatController::class, 'markRead'], $adminOnly);
+$router->add('POST', '/api/admin/whatsapp/conversations/{id}/bot-paused', [WhatsAppChatController::class, 'setBotPaused'], $adminOnly);
+$router->add('GET', '/api/admin/whatsapp/ws-ticket', [WhatsAppChatController::class, 'wsTicket'], $adminOnly);
+
+// Chatbot com fluxo visual (aba "Chatbot" do admin).
+$router->add('GET', '/api/admin/chatbot/flows', [ChatbotController::class, 'index'], $adminOnly);
+$router->add('POST', '/api/admin/chatbot/flows', [ChatbotController::class, 'store'], $adminOnly);
+$router->add('GET', '/api/admin/chatbot/flows/{id}', [ChatbotController::class, 'show'], $adminOnly);
+$router->add('PUT', '/api/admin/chatbot/flows/{id}', [ChatbotController::class, 'update'], $adminOnly);
+$router->add('DELETE', '/api/admin/chatbot/flows/{id}', [ChatbotController::class, 'destroy'], $adminOnly);
+$router->add('GET', '/api/admin/blocklist', [AdminUserController::class, 'listBlockedEmails'], $adminOnly);
+$router->add('POST', '/api/admin/blocklist', [AdminUserController::class, 'blockEmail'], $adminOnly);
+$router->add('DELETE', '/api/admin/blocklist', [AdminUserController::class, 'unblockEmail'], $adminOnly);
 
 // Config global do sistema — redes sociais (rodape) e abas ocultas do menu.
 // Leitura liberada pra qualquer logado (o rodape aparece pra todo mundo);
@@ -174,8 +242,18 @@ $router->add('PUT', '/api/admin/planos/{id}/ativo', [PlanoController::class, 'se
 $router->add('DELETE', '/api/admin/planos/{id}', [PlanoController::class, 'destroy'], $adminOnly);
 
 $router->add('GET', '/api/planos', [PlanoPublicController::class, 'index'], $auth);
-$router->add('POST', '/api/plano/pagamentos', [PagamentoController::class, 'store'], $auth);
-$router->add('POST', '/api/plano/pagamentos/cartao', [PagamentoController::class, 'storeCartao'], $auth);
+
+// Cupons de desconto — CRUD do admin + validacao (preview) pro usuario na hora
+// de pagar. A aplicacao real do desconto acontece no PagamentoController.
+$router->add('GET', '/api/admin/cupons', [CupomController::class, 'index'], $adminOnly);
+$router->add('POST', '/api/admin/cupons', [CupomController::class, 'store'], $adminOnly);
+$router->add('PUT', '/api/admin/cupons/{id}', [CupomController::class, 'update'], $adminOnly);
+$router->add('PUT', '/api/admin/cupons/{id}/campanha', [CupomController::class, 'setCampanha'], $adminOnly);
+$router->add('DELETE', '/api/admin/cupons/{id}', [CupomController::class, 'destroy'], $adminOnly);
+$router->add('POST', '/api/cupons/validar', [CupomController::class, 'validar'], $authVerified);
+
+$router->add('POST', '/api/plano/pagamentos', [PagamentoController::class, 'store'], $authVerified);
+$router->add('POST', '/api/plano/pagamentos/cartao', [PagamentoController::class, 'storeCartao'], $authVerified);
 $router->add('GET', '/api/plano/pagamentos/{id}', [PagamentoController::class, 'show'], $auth);
 
 // Webhook do Mercado Pago — sem middleware de proposito, o MP nunca tem um
@@ -209,6 +287,13 @@ $router->add('GET', '/api/admin/comunicados', [ComunicadoController::class, 'ind
 $router->add('POST', '/api/admin/comunicados', [ComunicadoController::class, 'store'], $adminOnly);
 $router->add('GET', '/api/comunicados/pending', [ComunicadoController::class, 'getPending'], $auth);
 $router->add('POST', '/api/comunicados/{id}/read', [ComunicadoController::class, 'markAsRead'], $auth);
+
+// Web Push do USUARIO — deixa qualquer logado ativar notificacoes no seu
+// dispositivo pra receber os comunicados. Reaproveita o NotificacaoController
+// (subscribe/unsubscribe/vapidPublicKey ja usam o user_id do token).
+$router->add('GET', '/api/push/vapid-public-key', [NotificacaoController::class, 'vapidPublicKey'], $auth);
+$router->add('POST', '/api/push/subscribe', [NotificacaoController::class, 'subscribe'], $auth);
+$router->add('POST', '/api/push/unsubscribe', [NotificacaoController::class, 'unsubscribe'], $auth);
 
 // Notificações do admin (histórico das vendas) + Web Push
 $router->add('GET', '/api/admin/notificacoes', [NotificacaoController::class, 'index'], $adminOnly);

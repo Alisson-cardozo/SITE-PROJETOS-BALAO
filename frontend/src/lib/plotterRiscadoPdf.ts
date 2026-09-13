@@ -231,7 +231,7 @@ export function buildRiscadoPdf(options: RiscadoPdfOptions): Blob {
     throw new Error('Molde sem pontos suficientes pra gerar o risco.');
   }
 
-  const profile = buildMoldProfile(options.pontos, options.sectionRatios, options.tacoConfigs);
+  const profile = buildMoldProfile(options.pontos, options.sectionRatios, options.tacoConfigs, true);
   if (!profile) {
     throw new Error('Nao foi possivel calcular o perfil do molde.');
   }

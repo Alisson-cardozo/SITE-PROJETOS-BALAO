@@ -41,6 +41,9 @@ final class AuthController
         if ($errors === [] && $this->users->findByEmail($email) !== null) {
             $errors['email'] = 'Este e-mail ja esta cadastrado.';
         }
+        if ($errors === [] && $this->users->isEmailBlocked($email)) {
+            $errors['email'] = 'Este e-mail está bloqueado. Fale com o administrador.';
+        }
 
         if ($errors !== []) {
             return Response::json(['errors' => $errors], 422);
@@ -64,6 +67,8 @@ final class AuthController
             'id' => (int) $user['id']
         ]);
 
+        $this->users->updateLastIp((int) $user['id'], $this->clientIp($request));
+
         return Response::json([
             'user' => $this->users->toPublicArray($this->users->findById((int) $user['id'])),
             'token' => $token,
@@ -81,15 +86,17 @@ final class AuthController
             return Response::json(['error' => 'E-mail ou senha invalidos.'], 401);
         }
 
+        if ($this->users->isEmailBlocked($email)) {
+            return Response::json(['error' => 'Este acesso esta bloqueado. Fale com o administrador.'], 403);
+        }
+
         if ($user['status'] === 'blocked') {
             return Response::json(['error' => 'Este acesso esta bloqueado. Fale com o administrador.'], 403);
         }
-        // pending_payment passa direto -- e assim que um cadastro novo, ainda
-        // sem plano pago, consegue logar pra chegar na aba "Solicitar Acesso"
-        // (o resto do sistema fica bloqueado pelo PaidAccessMiddleware, nao aqui).
-        if ($user['status'] === 'active' && $user['access_expires_at'] !== null && strtotime((string) $user['access_expires_at']) < time()) {
-            return Response::json(['error' => 'Seu acesso expirou. Fale com o administrador.'], 403);
-        }
+        // pending_payment e contas com plano expirado passam direto no login --
+        // assim o cliente consegue logar e chegar na aba "Solicitar Acesso / Renovar Plano"
+        // para efetuar o pagamento da renovacao (ferramentas pagas sao bloqueadas pelo PaidAccessMiddleware).
+
 
         // Check if there is an active session (activity within the last 60 seconds)
         // Check if there are 2 or more active sessions (activity within the last 60 seconds)
@@ -116,7 +123,7 @@ final class AuthController
 
         $tokenHash = hash('sha256', $token);
         Db::connection()->prepare(
-            'UPDATE users SET 
+            'UPDATE users SET
                 active_session_id = :session_id,
                 session_device = :device,
                 session_created_at = NOW(),
@@ -128,10 +135,28 @@ final class AuthController
             'id' => (int) $user['id']
         ]);
 
+        // Guarda o IP (rede/wifi) do cliente pra o admin ver/identificar.
+        $this->users->updateLastIp((int) $user['id'], $this->clientIp($request));
+
         return Response::json([
             'user' => $this->users->toPublicArray($this->users->findById((int) $user['id'])),
             'token' => $token,
         ]);
+    }
+
+    /** IP real do cliente. Como o nginx fica na frente, o REMOTE_ADDR e o proxy
+     * (127.0.0.1) — o IP de verdade vem no X-Forwarded-For / X-Real-IP. */
+    private function clientIp(Request $request): string
+    {
+        $fwd = trim((string) ($request->headers['x-forwarded-for'] ?? ''));
+        if ($fwd !== '') {
+            return trim(explode(',', $fwd)[0]);
+        }
+        $real = trim((string) ($request->headers['x-real-ip'] ?? ''));
+        if ($real !== '') {
+            return $real;
+        }
+        return (string) ($_SERVER['REMOTE_ADDR'] ?? '');
     }
 
     public function me(Request $request): Response
@@ -195,9 +220,116 @@ final class AuthController
             return Response::json(['errors' => $errors, 'error' => 'Verifique os campos.'], 422);
         }
 
-        $this->users->updateEmail((int) $user['id'], $newEmail);
+        // Se pediu o MESMO e-mail, nao ha o que trocar.
+        if ($newEmail === strtolower((string) $user['email'])) {
+            return Response::json(['errors' => ['new_email' => 'Este já é o seu e-mail atual.']], 422);
+        }
+
+        // Nao troca na hora: manda um codigo pro e-mail NOVO e espera a confirmacao.
+        $this->users->requestEmailChange((int) $user['id'], $newEmail);
+
+        return Response::json(['ok' => true, 'pending_email' => $newEmail]);
+    }
+
+    /** O frontend informa qual aba/ferramenta o cliente esta usando agora. */
+    public function reportActivity(Request $request): Response
+    {
+        $userId = (int) $request->attribute('user_id');
+        $view = trim((string) $request->input('view', ''));
+        if ($userId > 0 && $view !== '') {
+            $this->users->updateCurrentView($userId, $view);
+        }
+        return Response::json(['ok' => true]);
+    }
+
+    /** Cliente pede o codigo de validacao de telefone (enviado pelo WhatsApp). */
+    public function sendPhoneCode(Request $request): Response
+    {
+        $userId = (int) $request->attribute('user_id');
+        if ($this->users->findById($userId) === null) {
+            return Response::json(['error' => 'Usuario nao encontrado.'], 404);
+        }
+        $phone = trim((string) $request->input('phone', ''));
+        try {
+            $this->users->requestPhoneVerification($userId, $phone);
+        } catch (\Throwable $e) {
+            return Response::json(['errors' => ['phone' => $e->getMessage()], 'error' => $e->getMessage()], 422);
+        }
+        return Response::json(['ok' => true]);
+    }
+
+    /** Confirma o telefone com o codigo recebido no WhatsApp. */
+    public function confirmPhoneCode(Request $request): Response
+    {
+        $userId = (int) $request->attribute('user_id');
+        $user = $this->users->findById($userId);
+        if ($user === null) {
+            return Response::json(['error' => 'Usuario nao encontrado.'], 404);
+        }
+        $code = trim((string) $request->input('code', ''));
+        if (!preg_match('/^\d{6}$/', $code)) {
+            return Response::json(['errors' => ['code' => 'Digite o código de 6 dígitos.'], 'error' => 'Código inválido.'], 422);
+        }
+        if (!$this->users->confirmPhoneVerification($userId, $code)) {
+            return Response::json(['errors' => ['code' => 'Código incorreto ou expirado.'], 'error' => 'Não foi possível confirmar.'], 422);
+        }
+        return Response::json(['user' => $this->users->toPublicArray($this->users->findById($userId))]);
+    }
+
+    /** Confirma a troca de e-mail com o codigo enviado pro e-mail novo. */
+    public function confirmEmailChange(Request $request): Response
+    {
+        $user = $this->users->findById((int) $request->attribute('user_id'));
+        if ($user === null) {
+            return Response::json(['error' => 'Usuario nao encontrado.'], 404);
+        }
+
+        $code = trim((string) $request->input('code', ''));
+        if (!preg_match('/^\d{6}$/', $code)) {
+            return Response::json(['errors' => ['code' => 'Digite o código de 6 dígitos.'], 'error' => 'Código inválido.'], 422);
+        }
+
+        if (!$this->users->confirmEmailChange((int) $user['id'], $code)) {
+            return Response::json(['errors' => ['code' => 'Código incorreto ou expirado.'], 'error' => 'Não foi possível confirmar.'], 422);
+        }
 
         return Response::json(['user' => $this->users->toPublicArray($this->users->findById((int) $user['id']))]);
+    }
+
+    /**
+     * O proprio usuario exclui a conta dele. Exige a senha atual (evita exclusao
+     * acidental / por sessao sequestrada). Admin nao se exclui por aqui — usa o
+     * painel. Reaproveita UserService::delete, transferindo dados globais pro 1o
+     * admin.
+     */
+    public function deleteAccount(Request $request): Response
+    {
+        $userId = (int) $request->attribute('user_id');
+        $user = $this->users->findById($userId);
+        if ($user === null) {
+            return Response::json(['error' => 'Usuario nao encontrado.'], 404);
+        }
+        if (($user['role'] ?? '') === 'admin') {
+            return Response::json(['error' => 'Conta de administrador nao pode ser excluida por aqui.'], 403);
+        }
+
+        $password = (string) $request->input('password', '');
+        if (!Password::verify($password, $user['password_hash'])) {
+            return Response::json(['errors' => ['password' => 'Senha incorreta.'], 'error' => 'Senha incorreta.'], 422);
+        }
+
+        $adminId = (int) (Db::connection()->query("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1")->fetchColumn() ?: 0);
+        if ($adminId === 0) {
+            return Response::json(['error' => 'Nao foi possivel excluir a conta agora.'], 500);
+        }
+
+        try {
+            $this->users->delete($userId, $adminId);
+        } catch (\Throwable $e) {
+            return Response::json(['error' => 'Nao foi possivel excluir a conta: ' . $e->getMessage()], 500);
+        }
+
+        return Response::json(['ok' => true]);
     }
 
     public function logout(Request $request): Response

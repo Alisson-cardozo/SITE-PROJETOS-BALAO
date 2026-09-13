@@ -1,6 +1,7 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AppShell } from '../components/AppShell';
 import { SectionPlaceholder } from '../components/SectionPlaceholder';
+import { PushActivationCard } from '../components/PushActivationCard';
 import {
   accountNavItems,
   filterHiddenNavItems,
@@ -35,6 +36,7 @@ const PainelWorkspace = lazy(() => import('./PainelWorkspace').then((m) => ({ de
 const PlotterRiscadoPage = lazy(() => import('./PlotterRiscadoPage').then((m) => ({ default: m.PlotterRiscadoPage })));
 const PlotterTacosPage = lazy(() => import('./PlotterTacosPage').then((m) => ({ default: m.PlotterTacosPage })));
 const ProjectGallery = lazy(() => import('./ProjectGallery').then((m) => ({ default: m.ProjectGallery })));
+const ReduzirImagemPage = lazy(() => import('./ReduzirImagemPage').then((m) => ({ default: m.ReduzirImagemPage })));
 const RifasWorkspace = lazy(() => import('./RifasWorkspace').then((m) => ({ default: m.RifasWorkspace })));
 const UserSettingsPage = lazy(() => import('./UserSettingsPage').then((m) => ({ default: m.UserSettingsPage })));
 
@@ -64,6 +66,17 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
   const { user, token, logout } = useAuth();
   const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null);
   const [pendingComm, setPendingComm] = useState<Comunicado | null>(null);
+
+  // Card flutuante "ativar notificacoes" — so pra usuario que ainda nao ativou
+  // e nao dispensou. Some sozinho se o push ja estiver ativo (onAlreadyActive).
+  const [pushCardVisible, setPushCardVisible] = useState(
+    () => typeof window !== 'undefined' && window.localStorage.getItem('push_card_dismissed') !== '1'
+  );
+  const dismissPushCard = useCallback(() => {
+    window.localStorage.setItem('push_card_dismissed', '1');
+    setPushCardVisible(false);
+  }, []);
+  const hidePushCard = useCallback(() => setPushCardVisible(false), []);
 
   useEffect(() => {
     if (!token) return;
@@ -115,10 +128,10 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
 
   const navGroups = useMemo(
     () => {
-      // Sem plano pago: menu mostra SO "Solicitar Acesso" (os planos). Todas as
-      // outras abas somem ate o cliente pagar.
+      // Sem plano pago: menu mostra "Solicitar Acesso" (os planos) + as opcoes de
+      // conta ("Configuracoes do Usuario" — trocar senha/e-mail). O resto some.
       if (locked) {
-        return [[solicitarAcessoNavItem]];
+        return [[solicitarAcessoNavItem], visibleAccountNavItems];
       }
       // Com plano: mostra SO as abas que o plano do usuario libera (allowed_abas).
       // As que o plano nao inclui somem do menu (nao aparecem mais com cadeado).
@@ -172,6 +185,15 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
     }
     return selectableItems[0].id;
   });
+
+  /** Imagem ja reduzida em "Reduzir Imagem HD", a caminho da aba Bandeira ou
+   * Painel (botao "Usar na aba X") — entregue via prop pra ferramenta destino
+   * assim que ela monta, depois zerada (ver onInitialFileConsumed). */
+  const [imageHandoff, setImageHandoff] = useState<File | null>(null);
+  const handleUseReducedImage = useCallback((imageFile: File, target: 'bandeiras' | 'painel-letreiros') => {
+    setImageHandoff(imageFile);
+    setActiveId(target);
+  }, []);
 
   const [editingMoldId, setEditingMoldId] = useState<number | null>(() => {
     try {
@@ -246,6 +268,21 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
       }
     } catch {}
   }, [lanternaProjectId]);
+
+  // Reporta pro admin qual aba/ferramenta o cliente esta usando agora.
+  // Manda ao trocar de aba e a cada 40s pra manter o "online" fresco.
+  useEffect(() => {
+    if (!token || user?.role === 'admin') return;
+    const current = selectableItems.find((item) => item.id === activeId) ?? selectableItems[0];
+    const label = current?.label;
+    if (!label) return;
+    const report = () => {
+      void api.reportActivity(label, token).catch(() => {});
+    };
+    report();
+    const id = window.setInterval(report, 40000);
+    return () => window.clearInterval(id);
+  }, [token, activeId, selectableItems, user?.role]);
 
   if (!user) {
     return null;
@@ -358,7 +395,7 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
       ) : activeId === 'projetos-moldes-taqueados' ? (
         <ProjectGallery onModify={handleModifyProject} showModify={canUse('plotter-tacos')} />
       ) : activeId === 'bandeiras' ? (
-        <BandeiraWorkspace />
+        <BandeiraWorkspace initialFile={imageHandoff} onInitialFileConsumed={() => setImageHandoff(null)} />
       ) : activeId === 'acabamento-lanternagem-bojo' ? (
         <LanternagemBojoWorkspace projectId={lanternaProjectId} />
       ) : activeId === 'acabamento-biscoito-golfier' ? (
@@ -366,9 +403,11 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
       ) : activeId === 'projetos-lanternagem-bojo' ? (
         <LanternagemProjectGallery onOpen={handleOpenLanternaProject} />
       ) : activeId === 'painel-letreiros' ? (
-        <PainelWorkspace />
+        <PainelWorkspace initialFile={imageHandoff} onInitialFileConsumed={() => setImageHandoff(null)} />
       ) : activeId === '3d-fotos' ? (
         <Modelo3DWorkspace />
+      ) : activeId === 'reduzir-imagem' ? (
+        <ReduzirImagemPage onUseIn={handleUseReducedImage} />
       ) : activeId === 'profissionais' ? (
         <RifasWorkspace />
       ) : activeId === 'baixar-app' ? (
@@ -397,6 +436,10 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
             setPlotterTarget(null);
             setActiveId('moldes-galeria');
           }}
+          onGoToTaqueados={() => {
+            setPlotterTarget(null);
+            setActiveId('projetos-moldes-taqueados');
+          }}
         />
       ) : extraContent ? (
         extraContent
@@ -405,6 +448,11 @@ export function UserArea({ extraNavGroups = [], extraRoutes }: UserAreaProps) {
       )}
       </Suspense>
     </AppShell>
+
+    {/* Card flutuante pra ativar as notificacoes push (so usuario). */}
+    {user?.role === 'user' && pushCardVisible && (
+      <PushActivationCard variant="floating" onClose={dismissPushCard} onAlreadyActive={hidePushCard} />
+    )}
 
     {/* Pop-up de Comunicado (exibido apenas 1 vez para cada cliente) */}
     {pendingComm && (

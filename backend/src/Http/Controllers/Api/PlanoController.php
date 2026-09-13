@@ -100,6 +100,7 @@ final class PlanoController
         $abasInput = $request->input('abas');
         $showInRanking = (bool) $request->input('show_in_ranking', false);
         $salesOverrideCount = (int) $request->input('sales_override_count', 0);
+        $carlaIa = (bool) $request->input('carla_ia', false);
 
         $errors = [];
 
@@ -142,6 +143,7 @@ final class PlanoController
                 'abas' => $abas,
                 'show_in_ranking' => $showInRanking,
                 'sales_override_count' => $salesOverrideCount,
+                'carla_ia' => $carlaIa,
             ],
         ];
     }

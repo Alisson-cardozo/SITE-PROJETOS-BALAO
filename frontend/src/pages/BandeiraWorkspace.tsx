@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Download, Droplet, FileImage, FolderOpen, Grid3x3, Hand, Hash, ImagePlus, Layers, Loader2, Maximize2, Palette, Pencil, Send, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { CheckCircle2, Download, Droplet, FileImage, FolderOpen, Grid3x3, Hand, Hash, ImagePlus, Layers, Loader2, Maximize2, Palette, Pencil, Send, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import { downloadBlob, downloadCanvasAsPng, slugifyFilename } from '../lib/pdfExport';
 import {
   buildColorSummary,
@@ -13,12 +13,11 @@ import {
   FOLHA_USAVEL_ALTURA_CM,
   FOLHA_USAVEL_LARGURA_CM,
   gridSizeExceedsLimit,
-  MAX_EXPANDED_CELLS,
-  MAX_GRID_CELLS,
-  MAX_GRID_SIDE,
   readBandeiraNativePixelGrid,
   readBandeiraPixelGrid,
   reduceBandeiraPalette,
+  renderGridToAnnotatedCanvas,
+  renderGridToCleanCanvas,
   replaceColorInGrid,
   snapNearBlackToBlack,
   type BandeiraColorSummaryEntry,
@@ -50,7 +49,7 @@ const MAX_UNDO_STEPS = 3;
 const DEFAULT_COARSE_GRID_COLOR = '#2563eb';
 
 type Tool = 'mover' | 'lapis' | 'contagotas';
-type SidebarTab = 'tamanho' | 'cores' | 'numerar' | 'grades' | 'contagem' | 'dividir';
+type SidebarTab = 'cores' | 'numerar' | 'grades' | 'contagem' | 'dividir';
 
 function formatCm(value: number): string {
   const n = Number(value);
@@ -67,7 +66,15 @@ function computeCellBasePx(gridWidth: number, gridHeight: number): number {
   return Math.max(1, Math.min(CELL_BASE_PX_DEFAULT, maxCellPxAtMaxZoom));
 }
 
-export function BandeiraWorkspace() {
+interface BandeiraWorkspaceProps {
+  /** Imagem vinda de outra aba (ex: "Reduzir Imagem HD" → "Usar na aba
+   * Bandeira") — entra direto no recorte, como se o cliente tivesse acabado
+   * de escolher esse arquivo. So usada 1x, no primeiro mount. */
+  initialFile?: File | null;
+  onInitialFileConsumed?: () => void;
+}
+
+export function BandeiraWorkspace({ initialFile, onInitialFileConsumed }: BandeiraWorkspaceProps = {}) {
   const draftData = (() => {
     try {
       const saved = window.localStorage.getItem('sistema-novo:draft:bandeira');
@@ -82,7 +89,13 @@ export function BandeiraWorkspace() {
   const [file, setFile] = useState<File | null>(null);
   /** Arquivo recem-escolhido, aguardando o recorte (ver ImageCropModal) antes
    * de virar `file` de verdade e liberar o painel "Criar projeto". */
-  const [pendingCropFile, setPendingCropFile] = useState<File | null>(null);
+  const [pendingCropFile, setPendingCropFile] = useState<File | null>(() => initialFile ?? null);
+
+  useEffect(() => {
+    if (initialFile) onInitialFileConsumed?.();
+    // so na 1a montagem — initialFile e "consumido" 1x so.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [showCreatePanel, setShowCreatePanel] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,7 +119,7 @@ export function BandeiraWorkspace() {
   const [borderThickness, setBorderThickness] = useState(2);
   const [tool, setTool] = useState<Tool>('mover');
   const [zoom, setZoom] = useState(100);
-  const [showFineGrid, setShowFineGrid] = useState(true);
+  const [showFineGrid, setShowFineGrid] = useState(false);
   const [fineGridColor, setFineGridColor] = useState(DEFAULT_FINE_GRID_COLOR);
   const [showCoarseGrid, setShowCoarseGrid] = useState(false);
   const [coarseCols, setCoarseCols] = useState(DEFAULT_COARSE_COLS);
@@ -134,6 +147,8 @@ export function BandeiraWorkspace() {
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const rulerTopRef = useRef<HTMLCanvasElement>(null);
+  const rulerLeftRef = useRef<HTMLCanvasElement>(null);
   const paintingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const panRef = useRef<{
@@ -156,6 +171,14 @@ export function BandeiraWorkspace() {
    * taqueamento ou expansao pro tamanho real ao salvar). */
   const historyRef = useRef<string[][]>([]);
   const [undoCount, setUndoCount] = useState(0);
+
+  /** Grade base (cores originais, sem reduzir) usada so pro preview em tempo
+   * real do painel "Criar projeto" — numa resolucao pequena e fixa (bem menor
+   * que a grade final), pra recalcular a reducao de cor a cada digito sem
+   * travar. Refeita so quando o arquivo ou o tamanho mudam. */
+  const [previewBase, setPreviewBase] = useState<{ widthPx: number; heightPx: number; colors: string[] } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const cellBasePx = useMemo(() => computeCellBasePx(gridWidth, gridHeight), [gridWidth, gridHeight]);
 
@@ -219,6 +242,81 @@ export function BandeiraWorkspace() {
   );
   const exceedsLimit = gridSizeExceedsLimit(gridSize);
   const exceedsExpandedLimit = expandedSizeExceedsLimit(Number(larguraCm) || 0, Number(alturaCm) || 0);
+
+  // Recarrega a grade base do preview (resolucao pequena e fixa) quando o
+  // arquivo ou o tamanho mudam — com um pequeno debounce pra nao reprocessar
+  // a cada tecla digitada em largura/altura.
+  useEffect(() => {
+    if (!file || !showCreatePanel || !larguraCm || !alturaCm) {
+      setPreviewBase(null);
+      return;
+    }
+    let cancelled = false;
+    const previewMaxSide = 80;
+    const scale = Math.min(1, previewMaxSide / Math.max(gridSize.widthPx, gridSize.heightPx, 1));
+    const previewWidthPx = Math.max(1, Math.round(gridSize.widthPx * scale));
+    const previewHeightPx = Math.max(1, Math.round(gridSize.heightPx * scale));
+    setPreviewLoading(true);
+    const timer = setTimeout(() => {
+      readBandeiraPixelGrid(file, previewWidthPx, previewHeightPx)
+        .then((grid) => {
+          if (!cancelled) setPreviewBase(grid);
+        })
+        .catch(() => {
+          if (!cancelled) setPreviewBase(null);
+        })
+        .finally(() => {
+          if (!cancelled) setPreviewLoading(false);
+        });
+    }, 150);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      setPreviewLoading(false);
+    };
+  }, [file, showCreatePanel, larguraCm, alturaCm, gridSize.widthPx, gridSize.heightPx]);
+
+  /** Aplica a mesma reducao de cor que "Taquear imagem" vai usar, mas em cima
+   * da grade pequena do preview — reage na hora a quantidade de cores, sem
+   * precisar clicar em nada. */
+  const previewColors = useMemo(() => {
+    if (!previewBase) {
+      return null;
+    }
+    const distinctCount = buildColorSummary(previewBase.colors).length;
+    return targetColorCount > 0 && targetColorCount < distinctCount
+      ? reduceBandeiraPalette(previewBase.colors, targetColorCount)
+      : previewBase.colors;
+  }, [previewBase, targetColorCount]);
+
+  // Desenha o preview num canvas pequeno, celula a celula (igual a grade
+  // principal, so que numa caixa fixa de ate 220px).
+  useEffect(() => {
+    const canvas = previewCanvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+    if (!previewBase || !previewColors) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+    const boxSize = 220;
+    const cellPx = Math.max(1, Math.min(boxSize / previewBase.widthPx, boxSize / previewBase.heightPx));
+    const width = Math.max(1, Math.round(previewBase.widthPx * cellPx));
+    const height = Math.max(1, Math.round(previewBase.heightPx * cellPx));
+    canvas.width = width;
+    canvas.height = height;
+    for (let y = 0; y < previewBase.heightPx; y += 1) {
+      for (let x = 0; x < previewBase.widthPx; x += 1) {
+        ctx.fillStyle = previewColors[y * previewBase.widthPx + x];
+        ctx.fillRect(x * cellPx, y * cellPx, cellPx + 0.5, cellPx + 0.5);
+      }
+    }
+  }, [previewBase, previewColors]);
 
   const colorSummary: BandeiraColorSummaryEntry[] = useMemo(() => (colors ? buildColorSummary(colors) : []), [colors]);
 
@@ -293,26 +391,6 @@ export function BandeiraWorkspace() {
     setUndoCount(historyRef.current.length);
     setColors(previous);
     setSelectedColor(null);
-  }
-
-  /** So retaqueia no tamanho atual, sem mexer nas cores — usado por "Atualizar
-   * tamanho" depois que o projeto ja foi criado (nao deve desfazer reducao de
-   * cor ou edicoes manuais que o usuario ja tenha feito). Fica na grade
-   * pequena de trabalho, igual a 1a pixelizacao. */
-  async function handlePixelate() {
-    if (!file || exceedsLimit || exceedsExpandedLimit || loading) {
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const grid = await readBandeiraPixelGrid(file, gridSize.widthPx, gridSize.heightPx);
-      applyGridResult(grid, grid.colors);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Nao foi possivel taquear a imagem.');
-    } finally {
-      setLoading(false);
-    }
   }
 
   /** 1a pixelizacao, no painel "Criar projeto": taqueia e reduz cor numa
@@ -638,6 +716,104 @@ export function BandeiraWorkspace() {
     colorNumberMap,
   ]);
 
+  /** Desenha a regua de cima (colunas) e da lateral (linhas) — numera as
+   * celulas, acompanhando o scroll/zoom do palco (redesenha a cada scroll,
+   * resize da janela ou mudanca de zoom/grade). */
+  const RULER_SIZE = 22;
+  /** Mesmo valor do `padding` de `.bandeira-canvas-stage` no CSS — o canvas
+   * comeca depois desse respiro, entao a regua precisa somar isso pra alinhar
+   * os tracinhos com as celulas de verdade. */
+  const STAGE_PADDING_PX = 16;
+  const drawRulers = useCallback(() => {
+    const stage = stageRef.current;
+    const topCanvas = rulerTopRef.current;
+    const leftCanvas = rulerLeftRef.current;
+    if (!stage || !topCanvas || !leftCanvas) {
+      return;
+    }
+    const viewWidth = stage.clientWidth;
+    const viewHeight = stage.clientHeight;
+    topCanvas.width = viewWidth;
+    topCanvas.height = RULER_SIZE;
+    leftCanvas.width = RULER_SIZE;
+    leftCanvas.height = viewHeight;
+    const topCtx = topCanvas.getContext('2d');
+    const leftCtx = leftCanvas.getContext('2d');
+    if (!topCtx || !leftCtx) {
+      return;
+    }
+    topCtx.clearRect(0, 0, viewWidth, RULER_SIZE);
+    leftCtx.clearRect(0, 0, RULER_SIZE, viewHeight);
+    if (gridWidth === 0 || gridHeight === 0) {
+      return;
+    }
+    const cellPx = cellBasePx * (zoom / 100);
+    const scrollLeft = stage.scrollLeft;
+    const scrollTop = stage.scrollTop;
+
+    // passo adaptativo pro numero nao ficar espremido/sobreposto em zoom baixo
+    const niceSteps = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500];
+    const minStep = Math.max(1, 42 / Math.max(cellPx, 0.01));
+    const step = niceSteps.find((s) => s >= minStep) ?? niceSteps[niceSteps.length - 1];
+
+    topCtx.font = '10px sans-serif';
+    topCtx.textBaseline = 'top';
+    const firstCol = Math.max(0, Math.floor((scrollLeft - STAGE_PADDING_PX) / cellPx));
+    const lastCol = Math.min(gridWidth, Math.ceil((scrollLeft - STAGE_PADDING_PX + viewWidth) / cellPx));
+    for (let col = firstCol; col <= lastCol; col += 1) {
+      const x = Math.round(col * cellPx - scrollLeft + STAGE_PADDING_PX);
+      const major = col % step === 0;
+      topCtx.strokeStyle = major ? '#8fa3bd' : '#3a4d6b';
+      topCtx.beginPath();
+      topCtx.moveTo(x + 0.5, RULER_SIZE - (major ? 9 : 4));
+      topCtx.lineTo(x + 0.5, RULER_SIZE);
+      topCtx.stroke();
+      if (major) {
+        topCtx.fillStyle = '#b7c6db';
+        topCtx.fillText(String(col), x + 2, 1);
+      }
+    }
+
+    leftCtx.font = '10px sans-serif';
+    leftCtx.textBaseline = 'top';
+    const firstRow = Math.max(0, Math.floor((scrollTop - STAGE_PADDING_PX) / cellPx));
+    const lastRow = Math.min(gridHeight, Math.ceil((scrollTop - STAGE_PADDING_PX + viewHeight) / cellPx));
+    for (let row = firstRow; row <= lastRow; row += 1) {
+      const y = Math.round(row * cellPx - scrollTop + STAGE_PADDING_PX);
+      const major = row % step === 0;
+      leftCtx.strokeStyle = major ? '#8fa3bd' : '#3a4d6b';
+      leftCtx.beginPath();
+      leftCtx.moveTo(RULER_SIZE - (major ? 9 : 4), y + 0.5);
+      leftCtx.lineTo(RULER_SIZE, y + 0.5);
+      leftCtx.stroke();
+      if (major) {
+        leftCtx.save();
+        leftCtx.translate(2, y + 2);
+        leftCtx.fillStyle = '#b7c6db';
+        leftCtx.fillText(String(row), 0, 0);
+        leftCtx.restore();
+      }
+    }
+  }, [gridWidth, gridHeight, zoom, cellBasePx]);
+
+  useEffect(() => {
+    drawRulers();
+  }, [drawRulers]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) {
+      return;
+    }
+    const onScroll = () => drawRulers();
+    stage.addEventListener('scroll', onScroll);
+    window.addEventListener('resize', onScroll);
+    return () => {
+      stage.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [drawRulers]);
+
   const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const next = event.target.files?.[0] ?? null;
     setError(null);
@@ -696,6 +872,7 @@ export function BandeiraWorkspace() {
       coarseCols: realCoarseCols,
       coarseRows: realCoarseRows,
       tacoSizeCm,
+      showNumbers,
     });
   }
 
@@ -720,8 +897,20 @@ export function BandeiraWorkspace() {
   }
 
   function handleDownloadPng() {
-    const canvas = canvasRef.current;
-    if (!canvas || !colors) return;
+    if (!colors || gridWidth === 0 || gridHeight === 0) return;
+    const hasOverlay = showFineGrid || showCoarseGrid || showNumbers;
+    const canvas = hasOverlay
+      ? renderGridToAnnotatedCanvas(colors, gridWidth, gridHeight, {
+          showFineGrid,
+          fineGridColor,
+          showCoarseGrid,
+          coarseCols,
+          coarseRows,
+          coarseGridColor,
+          showNumbers,
+          colorNumberMap,
+        })
+      : renderGridToCleanCanvas(colors, gridWidth, gridHeight);
     const filename = `${slugifyFilename(nome || 'bandeira')}.png`;
     downloadCanvasAsPng(canvas, filename);
   }
@@ -736,16 +925,19 @@ export function BandeiraWorkspace() {
 
         {!colors ? (
           <div className="bandeira-upload-card">
-            <div className="bandeira-import-options-row">
-              <label className="mold-save-button bandeira-upload-label">
-                <ImagePlus size={16} />
-                {file ? `Imagem: ${file.name}` : 'Escolher imagem para taquear'}
-                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="bandeira-file-input" />
+            <div className="bandeira-upload-options">
+              <label className={`bandeira-upload-option bandeira-upload-option-primary${file ? ' has-file' : ''}`}>
+                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="bandeira-file-input-hidden" />
+                <span className="bandeira-upload-option-icon">
+                  {file ? <CheckCircle2 size={20} /> : <ImagePlus size={20} />}
+                </span>
+                <span className="bandeira-upload-option-text">
+                  <strong>{file ? file.name : 'Escolher imagem'}</strong>
+                  <small>{file ? 'Clique pra trocar a imagem' : 'Carregue uma foto ou desenho pra taquear'}</small>
+                </span>
               </label>
 
-              <label className="mold-secondary-button bandeira-upload-label" title="Pula tamanho e quantidade de cores — abre direto a tabela de cores pra editar">
-                <FolderOpen size={16} />
-                Importar Projeto Pronto
+              <label className="bandeira-upload-option" title="Pula tamanho e quantidade de cores — abre direto a tabela de cores pra editar">
                 <input
                   type="file"
                   accept="image/*,.json"
@@ -753,8 +945,15 @@ export function BandeiraWorkspace() {
                     const selected = e.target.files?.[0];
                     if (selected) void handleImportReadyProject(selected);
                   }}
-                  className="bandeira-file-input"
+                  className="bandeira-file-input-hidden"
                 />
+                <span className="bandeira-upload-option-icon">
+                  <FolderOpen size={20} />
+                </span>
+                <span className="bandeira-upload-option-text">
+                  <strong>Importe seu projeto pronto</strong>
+                  <small>Veja a tabela de cores, numere as cores e organize por grades</small>
+                </span>
               </label>
             </div>
 
@@ -814,11 +1013,23 @@ export function BandeiraWorkspace() {
                     — os valores ja preenchidos acima.
                   </p>
                 )}
+                <div className="bandeira-preview-box">
+                  <canvas ref={previewCanvasRef} className="bandeira-preview-canvas" />
+                  {previewLoading ? (
+                    <div className="bandeira-preview-loading">
+                      <Loader2 size={16} className="mold-import-spinner" />
+                    </div>
+                  ) : null}
+                  {!previewBase && !previewLoading ? (
+                    <p className="bandeira-preview-empty">Preencha largura e altura pra ver o preview</p>
+                  ) : null}
+                </div>
+
                 <label className="auth-field">
                   <span>Quantidade de cores desejada</span>
                   <input type="number" min={2} {...numericFieldProps(targetColorCount, setTargetColorCount, 2)} />
                 </label>
-                <p className="bandeira-hint">Da pra ajustar a quantidade de cores de novo depois de taquear.</p>
+                <p className="bandeira-hint">O preview acima muda em tempo real conforme vc ajusta a quantidade de cores.</p>
 
                 <button
                   type="button"
@@ -891,15 +1102,20 @@ export function BandeiraWorkspace() {
               </div>
             </div>
 
-            <div className="bandeira-canvas-stage" ref={stageRef}>
-              <canvas
-                ref={canvasRef}
-                className={`bandeira-canvas tool-${tool}`}
-                onPointerDown={handleCanvasPointerDown}
-                onPointerMove={handleCanvasPointerMove}
-                onPointerUp={stopPainting}
-                onContextMenu={(event) => event.preventDefault()}
-              />
+            <div className="bandeira-canvas-area">
+              <div className="bandeira-ruler-corner" />
+              <canvas ref={rulerTopRef} className="bandeira-ruler bandeira-ruler-top" />
+              <canvas ref={rulerLeftRef} className="bandeira-ruler bandeira-ruler-left" />
+              <div className="bandeira-canvas-stage" ref={stageRef}>
+                <canvas
+                  ref={canvasRef}
+                  className={`bandeira-canvas tool-${tool}`}
+                  onPointerDown={handleCanvasPointerDown}
+                  onPointerMove={handleCanvasPointerMove}
+                  onPointerUp={stopPainting}
+                  onContextMenu={(event) => event.preventDefault()}
+                />
+              </div>
             </div>
 
             <div className="bandeira-actions-row">
@@ -943,9 +1159,6 @@ export function BandeiraWorkspace() {
             <button type="button" className={sidebarTab === 'cores' ? 'active' : ''} onClick={() => setSidebarTab('cores')}>
               Cores
             </button>
-            <button type="button" className={sidebarTab === 'tamanho' ? 'active' : ''} onClick={() => setSidebarTab('tamanho')}>
-              Tamanho
-            </button>
             <button type="button" className={sidebarTab === 'numerar' ? 'active' : ''} onClick={() => setSidebarTab('numerar')}>
               Numerar
             </button>
@@ -959,68 +1172,6 @@ export function BandeiraWorkspace() {
               Dividir folha
             </button>
           </div>
-
-          {sidebarTab === 'tamanho' ? (
-            <>
-              <h3>Tamanho da bandeira (pixel)</h3>
-              <div className="bandeira-resize-row">
-                <input
-                  type="number"
-                  min={1}
-                  value={larguraCm === '' ? '' : Math.round((Number(larguraCm) || 0) / CM_POR_PIXEL)}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    setLarguraCm(raw === '' ? '' : String(Math.max(0, Number(raw) || 0) * CM_POR_PIXEL));
-                  }}
-                  onBlur={() => {
-                    if (!larguraCm || Number(larguraCm) < CM_POR_PIXEL) setLarguraCm(String(CM_POR_PIXEL));
-                  }}
-                />
-                <span>x</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={alturaCm === '' ? '' : Math.round((Number(alturaCm) || 0) / CM_POR_PIXEL)}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    setAlturaCm(raw === '' ? '' : String(Math.max(0, Number(raw) || 0) * CM_POR_PIXEL));
-                  }}
-                  onBlur={() => {
-                    if (!alturaCm || Number(alturaCm) < CM_POR_PIXEL) setAlturaCm(String(CM_POR_PIXEL));
-                  }}
-                />
-                <span>px</span>
-              </div>
-              <p className="bandeira-hint">
-                = {formatCm(Number(larguraCm))} x {formatCm(Number(alturaCm))} cm de bandeira
-              </p>
-              {exceedsLimit ? (
-                <p className="mold-import-error">
-                  Grade grande demais (maximo {MAX_GRID_SIDE}px de lado ou {MAX_GRID_CELLS} pixels no total).
-                </p>
-              ) : null}
-              {exceedsExpandedLimit ? (
-                <p className="mold-import-error">
-                  Bandeira grande demais no tamanho real (maximo {MAX_EXPANDED_CELLS.toLocaleString('pt-BR')} cm² no
-                  total).
-                </p>
-              ) : null}
-              <button
-                type="button"
-                className="mold-import-button"
-                onClick={() => void handlePixelate()}
-                disabled={
-                  exceedsLimit ||
-                  exceedsExpandedLimit ||
-                  loading ||
-                  (gridSize.widthPx * CM_POR_PIXEL === gridWidth && gridSize.heightPx * CM_POR_PIXEL === gridHeight)
-                }
-              >
-                {loading ? <Loader2 size={15} className="mold-import-spinner" /> : null}
-                Atualizar tamanho
-              </button>
-            </>
-          ) : null}
 
           {sidebarTab === 'cores' ? (
             <>
@@ -1061,6 +1212,31 @@ export function BandeiraWorkspace() {
                   <div className="bandeira-replace-row">
                     <span className="bandeira-swatch" style={{ background: selectedColor }} />
                     <code>{selectedColor}</code>
+                  </div>
+
+                  {colorSummary.some((entry) => entry.hex !== selectedColor) ? (
+                    <>
+                      <p className="bandeira-hint">Trocar por uma cor que ja existe no projeto:</p>
+                      <div className="bandeira-existing-colors-list">
+                        {colorSummary
+                          .filter((entry) => entry.hex !== selectedColor)
+                          .map((entry) => (
+                            <button
+                              type="button"
+                              key={entry.hex}
+                              className={`bandeira-existing-color-swatch ${replaceTarget === entry.hex ? 'active' : ''}`}
+                              title={entry.name}
+                              onClick={() => setReplaceTarget(entry.hex)}
+                            >
+                              <span className="bandeira-swatch" style={{ background: entry.hex }} />
+                            </button>
+                          ))}
+                      </div>
+                    </>
+                  ) : null}
+
+                  <p className="bandeira-hint">Ou escolha outra cor:</p>
+                  <div className="bandeira-replace-row">
                     <input type="color" value={replaceTarget} onChange={(e) => setReplaceTarget(e.target.value)} />
                     <button type="button" className="mold-import-button" onClick={handleReplaceSelected}>
                       Trocar todas por essa cor

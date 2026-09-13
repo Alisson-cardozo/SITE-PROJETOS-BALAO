@@ -63,22 +63,25 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8080',
+        target: 'https://alisson-projetos.fun',
         changeOrigin: true,
+        secure: false,
       },
     },
   },
   // `vite preview` serve o build REAL (ofuscado) — usado pra testar o que vai
-  // pra producao. Mesmo proxy do /api pro backend local.
+  // pra produção. Mesmo proxy do /api pro backend local.
   preview: {
     host: true,
     port: 5174,
     strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8080',
+        target: 'https://alisson-projetos.fun',
         changeOrigin: true,
+        secure: false,
       },
     },
   },
+
 });

@@ -136,7 +136,12 @@ export interface BandeiraPixelGrid {
  * ruido/serrilhado e preserva a cor real da imagem bem melhor ao reduzir uma
  * foto grande pra uma grade pequena.
  */
-export async function readBandeiraPixelGrid(file: File, targetWidthPx: number, targetHeightPx: number): Promise<BandeiraPixelGrid> {
+export async function readBandeiraPixelGrid(
+  file: File,
+  targetWidthPx: number,
+  targetHeightPx: number,
+  blurPx: number = 0
+): Promise<BandeiraPixelGrid> {
   const objectUrl = URL.createObjectURL(file);
   try {
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -158,6 +163,12 @@ export async function readBandeiraPixelGrid(file: File, targetWidthPx: number, t
     const sourceCtx = sourceCanvas.getContext('2d', { willReadFrequently: true })!;
     sourceCtx.imageSmoothingEnabled = true;
     sourceCtx.imageSmoothingQuality = 'high';
+    // borra a imagem ANTES de tirar a media por celula — mistura cores de
+    // regioes vizinhas de propositado, pra dar um resultado mais suave (usado
+    // pelo controle de "intensidade da vetorizacao" do Painel).
+    if (blurPx > 0) {
+      sourceCtx.filter = `blur(${blurPx}px)`;
+    }
     sourceCtx.drawImage(image, 0, 0, sourceWidth, sourceHeight);
 
     const sourceData = sourceCtx.getImageData(0, 0, sourceWidth, sourceHeight).data;
@@ -202,6 +213,156 @@ export async function readBandeiraPixelGrid(file: File, targetWidthPx: number, t
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
+}
+
+/**
+ * Desenha a grade de cores num canvas novo, limpo, exatamente 1 pixel do PNG
+ * por taco/celula (sem linha de grade, sem numero, sem qualquer overlay, sem
+ * escala) — assim o PNG baixado sai sempre do mesmo tamanho da grade de
+ * trabalho (ex: 90x120), fiel as cores reais, e pode ser reaberto depois em
+ * "Importar projeto pronto" reconstruindo a grade original certinha.
+ */
+export function renderGridToCleanCanvas(colors: string[], widthPx: number, heightPx: number): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = widthPx;
+  canvas.height = heightPx;
+  const ctx = canvas.getContext('2d')!;
+  const imageData = ctx.createImageData(widthPx, heightPx);
+  for (let i = 0; i < widthPx * heightPx; i += 1) {
+    const { r, g, b } = hexToRgb(colors[i]);
+    const offset = i * 4;
+    imageData.data[offset] = r;
+    imageData.data[offset + 1] = g;
+    imageData.data[offset + 2] = b;
+    imageData.data[offset + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+/** Tamanho fixo (px) de cada celula na exportacao ANOTADA (com grade/numero)
+ * — precisa ser grande o bastante pra numero ficar legivel (mesmo limiar de
+ * 18px usado no canvas interativo pra decidir se desenha o numero ou nao). */
+const ANNOTATED_EXPORT_CELL_PX = 24;
+const ANNOTATED_EXPORT_MAX_CANVAS_DIMENSION_PX = 14000;
+
+export interface GridOverlayOptions {
+  showFineGrid: boolean;
+  fineGridColor: string;
+  showNumbers: boolean;
+  colorNumberMap: Map<string, number>;
+  showCoarseGrid?: boolean;
+  coarseCols?: number;
+  coarseRows?: number;
+  coarseGridColor?: string;
+  /** Desenha cada celula como um circulo (bolinha), num fundo escuro, em vez
+   * de quadrado solido — pro Painel exportar o PNG igual ao modo "Bolinha"
+   * (visual de painel de LED) que esta sendo mostrado na tela. `dotsSkipHex`
+   * some com celulas dessa cor (ex: preto tratado como "modulo apagado"). */
+  dotsMode?: boolean;
+  dotsBgColor?: string;
+  dotsSkipHex?: string;
+}
+
+/**
+ * Mesmo desenho do canvas interativo (grade fina, grade de folhas/tacos,
+ * numero de cada cor) so que num canvas novo, num tamanho de celula FIXO
+ * (independe do zoom da tela) — usado quando o usuario baixa o PNG com
+ * alguma dessas opcoes ligadas, pra ele salvar exatamente o que esta vendo.
+ */
+export function renderGridToAnnotatedCanvas(
+  colors: string[],
+  widthPx: number,
+  heightPx: number,
+  options: GridOverlayOptions
+): HTMLCanvasElement {
+  const cellPx = Math.max(
+    1,
+    Math.min(ANNOTATED_EXPORT_CELL_PX, ANNOTATED_EXPORT_MAX_CANVAS_DIMENSION_PX / Math.max(widthPx, heightPx, 1))
+  );
+  const canvas = document.createElement('canvas');
+  const width = Math.max(1, Math.round(widthPx * cellPx));
+  const height = Math.max(1, Math.round(heightPx * cellPx));
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d')!;
+
+  if (options.dotsMode) {
+    ctx.fillStyle = options.dotsBgColor ?? '#000000';
+    ctx.fillRect(0, 0, width, height);
+    const radius = Math.max(1, cellPx * 0.32);
+    for (let y = 0; y < heightPx; y += 1) {
+      for (let x = 0; x < widthPx; x += 1) {
+        const hex = colors[y * widthPx + x];
+        if (options.dotsSkipHex && hex.toLowerCase() === options.dotsSkipHex.toLowerCase()) {
+          continue;
+        }
+        ctx.fillStyle = hex;
+        ctx.beginPath();
+        ctx.arc(x * cellPx + cellPx / 2, y * cellPx + cellPx / 2, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  } else {
+    for (let y = 0; y < heightPx; y += 1) {
+      for (let x = 0; x < widthPx; x += 1) {
+        ctx.fillStyle = colors[y * widthPx + x];
+        ctx.fillRect(x * cellPx, y * cellPx, cellPx + 0.5, cellPx + 0.5);
+      }
+    }
+  }
+
+  if (options.showFineGrid && cellPx >= 3) {
+    const { r, g, b } = hexToRgb(options.fineGridColor);
+    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.35)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = 0; x <= widthPx; x += 1) {
+      ctx.moveTo(Math.round(x * cellPx) + 0.5, 0);
+      ctx.lineTo(Math.round(x * cellPx) + 0.5, height);
+    }
+    for (let y = 0; y <= heightPx; y += 1) {
+      ctx.moveTo(0, Math.round(y * cellPx) + 0.5);
+      ctx.lineTo(width, Math.round(y * cellPx) + 0.5);
+    }
+    ctx.stroke();
+  }
+
+  if (options.showCoarseGrid && (options.coarseCols ?? 0) > 0 && (options.coarseRows ?? 0) > 0) {
+    ctx.strokeStyle = options.coarseGridColor ?? '#2563eb';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let x = 0; x <= widthPx; x += options.coarseCols!) {
+      ctx.moveTo(Math.round(x * cellPx), 0);
+      ctx.lineTo(Math.round(x * cellPx), height);
+    }
+    for (let y = 0; y <= heightPx; y += options.coarseRows!) {
+      ctx.moveTo(0, Math.round(y * cellPx));
+      ctx.lineTo(width, Math.round(y * cellPx));
+    }
+    ctx.stroke();
+  }
+
+  if (options.showNumbers && cellPx >= 18) {
+    ctx.font = `${Math.max(9, Math.floor(cellPx * 0.45))}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let y = 0; y < heightPx; y += 1) {
+      for (let x = 0; x < widthPx; x += 1) {
+        const hex = colors[y * widthPx + x];
+        const number = options.colorNumberMap.get(hex);
+        if (number == null) {
+          continue;
+        }
+        const { r, g, b } = hexToRgb(hex);
+        const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+        ctx.fillStyle = luminance > 140 ? '#111111' : '#ffffff';
+        ctx.fillText(String(number), x * cellPx + cellPx / 2, y * cellPx + cellPx / 2);
+      }
+    }
+  }
+
+  return canvas;
 }
 
 export interface BandeiraColorSummaryEntry {
